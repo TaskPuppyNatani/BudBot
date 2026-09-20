@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${BUDBOT_DATABASE_NAME:-budbot}
+      POSTGRES_USER: ${BUDBOT_DATABASE_USER:-budbot}
+      POSTGRES_PASSWORD: ${BUDBOT_DATABASE_PASSWORD:-budbot_dev}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - budbot_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+      target: development
+    environment:
+      BUDBOT_ENVIRONMENT: development
+      BUDBOT_DATABASE_URL: postgresql+asyncpg://${BUDBOT_DATABASE_USER:-budbot}:${BUDBOT_DATABASE_PASSWORD:-budbot_dev}@db:5432/${BUDBOT_DATABASE_NAME:-budbot}
+    command:
+      - /bin/sh
+      - -c
+      - alembic upgrade head && uvicorn budbot.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  budbot_postgres_data:

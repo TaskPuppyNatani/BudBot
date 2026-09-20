@@ -1,0 +1,1 @@
+"""BudBot backend application package."""
