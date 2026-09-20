@@ -1,10 +1,13 @@
 """FastAPI dependencies for application-owned resources."""
 
 from collections.abc import AsyncIterator
+from typing import Annotated
+from uuid import UUID
 
-from fastapi import Request
+from fastapi import Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from budbot.core.tenancy import TenantContext
 from budbot.database.session import Database
 
 
@@ -15,8 +18,27 @@ async def get_database(request: Request) -> Database:
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
-    """Provide one SQLAlchemy session for a request."""
+    """Provide a request transaction that commits only after successful handling."""
 
     database = await get_database(request)
     async for session in database.session():
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def get_tenant_context(
+    tenant_business_id: Annotated[
+        UUID,
+        Header(
+            alias="X-BudBot-Business-ID",
+            description="Temporary M2 development tenant context; not authentication",
+        ),
+    ],
+) -> TenantContext:
+    """Resolve the explicit temporary pre-authentication tenant header."""
+
+    return TenantContext(business_id=tenant_business_id)

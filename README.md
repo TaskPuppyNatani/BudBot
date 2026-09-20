@@ -1,12 +1,13 @@
 # BudBot
 
 BudBot is a white-label, multi-tenant local-business assistant platform. The
-current implementation is **M1: Project Foundation** only: a FastAPI service,
-typed runtime configuration, asynchronous PostgreSQL connectivity, Alembic,
-health/readiness endpoints, tests, and a Docker development stack.
+current implementation includes **M1: Project Foundation** and **M2: Tenant +
+Multi-Location Domain**: a FastAPI service, asynchronous PostgreSQL access,
+Alembic migrations, tenant-scoped businesses and locations, normalized weekly
+hours, user/business membership foundations, and configurable assistant identity.
 
-No tenant, user, location, compliance, command, provider, admin, or widget
-behavior is implemented in M1.
+Authentication, customer sessions, compliance enforcement, commands, AI
+providers, the admin frontend, and the widget are not implemented yet.
 
 ## Requirements
 
@@ -73,4 +74,24 @@ Apply migrations to the configured database with:
 ```
 
 Alembic owns production schema changes. The M1 baseline revision intentionally
-contains no domain tables; those begin in later milestones.
+contains no domain tables; M2 adds the tenant and multi-location schema.
+
+## M2 development API
+
+M2 provides development APIs under `/api/v1`. Business creation is an explicit
+pre-authentication bootstrap route. All business reads/updates and tenant-owned
+location or assistant routes require this temporary header:
+
+```text
+X-BudBot-Business-ID: <business UUID>
+```
+
+This header selects tenant context but does **not** authenticate the caller. Do
+not expose these M2 routes as production-authorized administration endpoints.
+Future authentication will replace the header dependency while retaining the
+same tenant-scoped services.
+
+Identifiers are application-generated UUIDs. Assistant display names are
+ordinary mutable configuration and are never used as identifiers. Location
+assistant overrides use nullable fields: an unset/null override inherits the
+business assistant value; a non-null override wins.

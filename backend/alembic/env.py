@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from budbot.core.config import get_settings
 from budbot.database.base import Base
+import budbot.models  # noqa: F401  # Register all model metadata for Alembic.
 
 config = context.config
 if config.config_file_name is not None:

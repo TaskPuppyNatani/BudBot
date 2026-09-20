@@ -519,3 +519,29 @@ BudBot V1 is not complete until:
 - tenant isolation tests pass;
 - no known blocking security/compliance defects remain;
 - documentation matches shipped behavior.
+
+## Current M2 implementation notes
+
+These details describe the concrete M2 implementation without changing the V1
+contracts above:
+
+- Domain identifiers are application-generated UUIDs stored through
+  SQLAlchemy's UUID type, which maps to native PostgreSQL UUID columns.
+- `user_accounts` and `business_memberships` form an explicit many-to-many
+  account/business relationship. Membership carries a bounded role label, but
+  M2 does not assign authorization semantics or implement login.
+- Normal tenant-owned queries use `TenantScopedRepository`, initialized with an
+  immutable request-level `TenantContext`. Primary-key reads add the business
+  predicate automatically and return the same not-found result for missing and
+  cross-tenant records.
+- Until authentication is implemented, M2 API routes resolve tenant context
+  from `X-BudBot-Business-ID`. This is a development/test selector, not proof of
+  identity. Business creation is the only unscoped bootstrap route.
+- Each business has one stable assistant configuration. A location may have one
+  nullable override row for display name, greeting, fallback message, and
+  enabled state. `AssistantService.resolve` is the single inheritance resolver:
+  non-null location values win; null values inherit the business default.
+- Weekly hours are normalized as one optional row per weekday and location.
+  Weekdays use Monday `0` through Sunday `6`. Closed rows contain no times;
+  open rows require `open_time < close_time`.
+  Special/temporary hours remain a later extension.
