@@ -45,3 +45,16 @@ class ComplianceError(DomainError):
         status_code: int = 403,
     ) -> None:
         super().__init__(detail, code=code, status_code=status_code)
+
+
+class CommandError(DomainError):
+    """A normalized parser, registry-resolution, or execution denial."""
+
+    def __init__(
+        self,
+        code: str,
+        detail: str,
+        *,
+        status_code: int = 400,
+    ) -> None:
+        super().__init__(detail, code=code, status_code=status_code)

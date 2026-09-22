@@ -287,11 +287,35 @@ Command(
 
 The concrete API may differ, but the registry must remain explicit and inspectable.
 
+## Current M4 framework
+
+M4 provides typed command definitions, explicit registry bootstrap, case-insensitive
+command-name parsing, aliases, customer/admin scope separation, argument metadata,
+permission and feature requirements, M3 compliance-capability hooks, deterministic
+introspection, and dynamic `/help`.
+
+Only customer and admin `/help` are registered as executable built-ins in M4. The
+other V1 names below remain protected for their later milestones, but protection does
+not make them registered, executable, visible in help, or available to autocomplete.
+Unknown and unavailable commands fail closed.
+
+Customer command execution and autocomplete use the existing tenant and customer
+session boundaries. The bounded M4 HTTP API does not expose admin execution because
+production authentication does not exist yet. Admin command contexts and permission
+evaluation are explicit framework inputs for later authenticated integration; the
+development tenant header is not authentication.
+
+Feature requirements are evaluated from a request-level feature set, and compliance
+requirements delegate to the M3 `ComplianceEngine`. Safe future custom commands have
+a declarative action shape (`knowledge_response`, `external_link`, or
+`location_info`) and protected-name validation, but M4 does not persist or execute
+custom commands.
+
 ## V1 command checklist
 
 ### Customer
 
-- [ ] `/help`
+- [x] `/help`
 - [ ] `/hours`
 - [ ] `/locations`
 - [ ] `/location`
@@ -310,7 +334,7 @@ The concrete API may differ, but the registry must remain explicit and inspectab
 
 ### Admin
 
-- [ ] `/help`
+- [x] `/help`
 - [ ] `/status`
 - [ ] `/locations`
 - [ ] `/location`

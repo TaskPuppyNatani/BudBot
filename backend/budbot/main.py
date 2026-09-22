@@ -9,6 +9,7 @@ from budbot.api.errors import install_exception_handlers
 from budbot.api.routes.assistants import router as assistants_router
 from budbot.api.routes.businesses import router as businesses_router
 from budbot.api.routes.compliance import router as compliance_router
+from budbot.api.routes.commands import router as commands_router
 from budbot.api.routes.health import router as health_router
 from budbot.api.routes.locations import router as locations_router
 from budbot.api.routes.sessions import router as sessions_router
@@ -42,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(assistants_router)
     application.include_router(compliance_router)
     application.include_router(sessions_router)
+    application.include_router(commands_router)
     return application
 
 

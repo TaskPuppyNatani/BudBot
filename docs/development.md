@@ -189,9 +189,11 @@ Acceptance:
 
 ### M5 - Core customer information commands
 
+M4 customer `/help` remains implemented and expands automatically as real
+customer handlers are registered.
+
 Implement fully:
 
-- `/help`
 - `/hours`
 - `/locations`
 - `/location`
@@ -289,9 +291,11 @@ Admin UI must support:
 - preview;
 - audit history.
 
+M4 admin `/help` remains implemented and expands automatically as authenticated
+admin handlers are registered.
+
 Implement fully:
 
-- `/help`
 - `/status`
 - `/locations`
 - `/location`
@@ -570,3 +574,25 @@ These details describe the bounded M3 implementation without starting M4:
 - The PostgreSQL-only location-selection concurrency test is skipped unless
   `BUDBOT_TEST_POSTGRES_URL` points to an isolated database already migrated
   to Alembic head. SQLite tests do not prove PostgreSQL row-lock behavior.
+
+## Current M4 implementation notes
+
+- M4 uses an explicit in-memory command registry and bootstrap. It adds no database
+  model or Alembic migration.
+- Command names are case-insensitive; argument text retains its original case.
+  Natural-language input remains distinguishable from slash commands and is not
+  routed through the command executor.
+- One executor owns scope, permission, feature, compliance, argument, and handler
+  ordering. Protected capability checks reuse the M3 `ComplianceEngine`.
+- Customer and admin `/help` are the only executable M4 built-ins. Future V1 command
+  names are protected from custom-command collisions but are not registered or
+  advertised before their handlers exist.
+- `POST /api/v1/commands/execute` and `GET /api/v1/commands` are customer-only M4
+  surfaces. Both require the temporary tenant header and a live same-tenant customer
+  session. They do not create an admin-authentication mechanism.
+- Admin permission state and feature availability are request-scoped inputs designed
+  for future authenticated and persisted providers. Missing admin identity,
+  permissions, features, or compliance approval fails closed.
+- Future custom commands are represented only by a safe declarative definition and
+  protected-name validation. M4 does not execute arbitrary custom actions, Python,
+  shell commands, SQL, providers, or client-selected handlers.
