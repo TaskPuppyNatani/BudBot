@@ -10,6 +10,7 @@ from budbot.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 if TYPE_CHECKING:
     from budbot.models.assistant import AssistantConfiguration
     from budbot.models.location import Location
+    from budbot.models.session import CustomerSession
     from budbot.models.user import BusinessMembership
 
 
@@ -27,6 +28,18 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     primary_brand_color: Mapped[str | None] = mapped_column(String(7))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     default_timezone: Mapped[str | None] = mapped_column(String(100))
+    compliance_profile_id: Mapped[str] = mapped_column(
+        String(100),
+        default="general_retail",
+        server_default="general_retail",
+        nullable=False,
+    )
+    compliance_profile_version: Mapped[str] = mapped_column(
+        String(50),
+        default="1.0",
+        server_default="1.0",
+        nullable=False,
+    )
 
     locations: Mapped[list["Location"]] = relationship(
         back_populates="business", cascade="all, delete-orphan"
@@ -38,5 +51,8 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         uselist=False,
     )
     memberships: Mapped[list["BusinessMembership"]] = relationship(
+        back_populates="business", cascade="all, delete-orphan"
+    )
+    customer_sessions: Mapped[list["CustomerSession"]] = relationship(
         back_populates="business", cascade="all, delete-orphan"
     )

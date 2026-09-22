@@ -218,6 +218,11 @@ Optional profile-approved settings may be configurable.
 
 Mandatory safeguards are not business-disableable.
 
+Customer sessions use `BUDBOT_CUSTOMER_SESSION_TTL_SECONDS` for their bounded
+lifetime. The development default is 86,400 seconds (24 hours); expiration is
+evaluated server-side and is not an immortal verification. Mandatory profile
+rules and the active profile version are not business-disableable options.
+
 ## Maps configuration
 
 A location may contain enough data to generate a Google Maps directions URL without making a live Places API request for every chat.

@@ -68,5 +68,7 @@ class BusinessRead(DomainSchema):
     primary_brand_color: str | None
     active: bool
     default_timezone: str | None
+    compliance_profile_id: str
+    compliance_profile_version: str
     created_at: datetime
     updated_at: datetime

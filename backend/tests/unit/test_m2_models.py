@@ -10,11 +10,12 @@ from budbot.models.location import Location
 from budbot.models.user import BusinessMembership, UserAccount
 
 
-def test_metadata_contains_only_m1_and_m2_tables() -> None:
+def test_metadata_contains_m1_m2_and_m3_tables() -> None:
     assert set(Base.metadata.tables) == {
         "assistant_configurations",
         "business_memberships",
         "businesses",
+        "customer_sessions",
         "location_assistant_overrides",
         "location_hours",
         "locations",

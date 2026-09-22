@@ -112,6 +112,28 @@ A cannabis session should contain, at minimum:
 
 Do not store unnecessary identity documents merely to implement the website age gate.
 
+## M3 implementation boundary
+
+M3 persists an opaque UUID customer session scoped to the tenant, with an
+optional active same-tenant location, a snapshot of the active profile ID and
+version, an explicit age-gate state, an attestation timestamp when submitted,
+and a bounded expiration timestamp. It stores no date of birth, government ID,
+ID image, or customer legal name.
+
+The initial profile versions are `general_retail@1.0` and
+`oregon_cannabis@1.0`. Existing businesses are backfilled to
+`general_retail@1.0`. A profile change does not rewrite existing sessions;
+the compliance engine rejects a session whose stored profile snapshot no
+longer matches the business's active profile with
+`COMPLIANCE_PROFILE_MISMATCH`. A new session is required.
+
+The session API accepts `confirmed_21_or_older` only for the website/session
+attestation flow. A positive Oregon attestation moves a new session to
+`VERIFIED`; a negative response moves it to `DENIED`. Denied and expired
+sessions cannot be upgraded in place. The attestation is not transaction-level
+ID verification or purchase authorization, and OMMP verification remains
+deferred.
+
 ## Request enforcement
 
 Conceptual request path:

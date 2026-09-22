@@ -545,3 +545,28 @@ contracts above:
   Weekdays use Monday `0` through Sunday `6`. Closed rows contain no times;
   open rows require `open_time < close_time`.
   Special/temporary hours remain a later extension.
+
+## Current M3 implementation notes
+
+These details describe the bounded M3 implementation without starting M4:
+
+- `CustomerSession` uses an application-generated UUID as its opaque public
+  reference and is accessed through `TenantScopedRepository`.
+- Sessions snapshot `compliance_profile_id` and
+  `compliance_profile_version`. The built-in profiles are
+  `general_retail@1.0` and `oregon_cannabis@1.0`; the former is the safe
+  backfill/default.
+- `ComplianceEngine.authorize` is the single server-side capability guard.
+  `requires_capability(...)` is a reusable FastAPI dependency for future
+  routes/tools. Unknown profiles, capabilities, and invalid states fail
+  closed.
+- `BUDBOT_CUSTOMER_SESSION_TTL_SECONDS` defaults to 86,400 seconds. Expiry is
+  checked during session access and capability authorization; no cleanup
+  worker is introduced in M3.
+- The temporary `X-BudBot-Business-ID` header remains a development/test
+  tenant selector, not authentication. M3 adds only the minimum profile
+  configuration path needed for development/testing; full authentication and
+  admin UI remain later work.
+- The PostgreSQL-only location-selection concurrency test is skipped unless
+  `BUDBOT_TEST_POSTGRES_URL` points to an isolated database already migrated
+  to Alembic head. SQLite tests do not prove PostgreSQL row-lock behavior.

@@ -29,6 +29,7 @@ services:
     environment:
       BUDBOT_ENVIRONMENT: development
       BUDBOT_DATABASE_URL: postgresql+asyncpg://${BUDBOT_DATABASE_USER:-budbot}:${BUDBOT_DATABASE_PASSWORD:-budbot_dev}@db:5432/${BUDBOT_DATABASE_NAME:-budbot}
+      BUDBOT_CUSTOMER_SESSION_TTL_SECONDS: ${BUDBOT_CUSTOMER_SESSION_TTL_SECONDS:-86400}
     command:
       - /bin/sh
       - -c
