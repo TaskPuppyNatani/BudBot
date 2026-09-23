@@ -157,13 +157,31 @@ async def test_help_and_introspection_filter_features_and_use_assistant_name(
     help_result = await executor.execute("/help", unavailable)
     assert help_result.output.startswith("Pine Guide commands:")
     assert [command.name for command in help_result.commands] == [
+        "about",
+        "age",
+        "clear",
+        "contact",
         "help",
         "help-only-test",
+        "hours",
+        "location",
+        "locations",
     ]
     detailed = await executor.metadata(unavailable, include_unavailable=True)
     assert [(item.name, item.available) for item in detailed] == [
+        ("about", True),
+        ("age", True),
+        ("clear", True),
+        ("contact", True),
+        ("directions", False),
+        ("faq", False),
         ("feature-test", False),
         ("help", True),
+        ("hours", True),
+        ("location", True),
+        ("locations", True),
+        ("payments", False),
+        ("policies", False),
     ]
     with pytest.raises(CommandError) as unavailable_error:
         await executor.execute("/feature-test", unavailable)
@@ -176,9 +194,20 @@ async def test_help_and_introspection_filter_features_and_use_assistant_name(
         customer_session_id=unavailable.customer_session_id,
         features=frozenset({"faq_enabled"}),
     )
-    assert [
-        command.name for command in (await executor.execute("/help", available)).commands
-    ] == ["feature-test", "help", "help-only-test"]
+    available_help = await executor.execute("/help", available)
+    assert [command.name for command in available_help.commands] == [
+        "about",
+        "age",
+        "clear",
+        "contact",
+        "faq",
+        "feature-test",
+        "help",
+        "help-only-test",
+        "hours",
+        "location",
+        "locations",
+    ]
 
 
 async def test_compliance_hook_reuses_m3_engine(db_session) -> None:

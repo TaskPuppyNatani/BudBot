@@ -36,6 +36,11 @@ active
 default_timezone       optional
 ```
 
+M5 adds optional business-wide `payment_methods` (objects with `name` and optional
+`details`) and `store_policies` (objects with `title` and `text`). These are explicit
+customer-facing data, not payment processing or executable markup. A null value means
+not configured; an empty list means none are listed.
+
 ## Assistant configuration
 
 At minimum:
@@ -140,6 +145,12 @@ Examples include:
 - store policies;
 - frequently asked questions.
 
+M5 persists public FAQs in `faq_entries`, with `business_id`, optional `location_id`,
+`question`, `answer`, `enabled`, and `is_public`. Location-scoped rows must belong to
+the same business. Only enabled/public rows are exposed; for the selected location, a
+matching normalized question overrides the business-wide entry. Matching is exact-first
+then case-insensitive substring search, not semantic retrieval.
+
 ## Product/catalog configuration
 
 V1 must define the capability even though production POS integrations are deferred.
@@ -180,10 +191,14 @@ faq_enabled
 products_enabled
 promotions_enabled
 payments_info_enabled
+policies_info_enabled
 custom_commands_enabled
 ```
 
 Compliance may disable a capability regardless of a business feature flag.
+
+M5's four customer-information flags default to enabled; disabling a flag hides the
+command from help/autocomplete and rejects execution without confusing it with missing data.
 
 ## AI configuration
 

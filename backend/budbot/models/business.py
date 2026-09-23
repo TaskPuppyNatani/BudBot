@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, JSON, String, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from budbot.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -28,6 +28,20 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     primary_brand_color: Mapped[str | None] = mapped_column(String(7))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     default_timezone: Mapped[str | None] = mapped_column(String(100))
+    payment_methods: Mapped[list[dict[str, str | None]] | None] = mapped_column(JSON)
+    store_policies: Mapped[list[dict[str, str]] | None] = mapped_column(JSON)
+    directions_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    faq_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    payments_info_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    policies_info_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
     compliance_profile_id: Mapped[str] = mapped_column(
         String(100),
         default="general_retail",

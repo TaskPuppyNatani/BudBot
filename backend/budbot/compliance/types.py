@@ -59,6 +59,7 @@ class ComplianceProfile:
     minimum_age: int | None
     website_attestation_notice: str
     capability_rules: Mapping[ComplianceCapability, CapabilityRule]
+    medical_eligibility_notice: str | None = None
 
     def initial_age_gate_status(self) -> str:
         """Return the initial persisted age state without importing the model."""

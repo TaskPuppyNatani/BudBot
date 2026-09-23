@@ -131,9 +131,9 @@ For Oregon cannabis, this command must not imply that website age attestation re
 
 ### `/clear`
 
-Clear conversational context for the current chat while preserving security/compliance state that should survive a conversational reset, such as the current tenant and valid age-gate/session state.
-
-The implementation must define exactly which state is cleared.
+M5 stores no conversational history. The command reports that there is nothing to clear
+and preserves the tenant, selected location, age-gate status, and compliance-profile
+snapshot. It does not create or reset chat history.
 
 ### `/about`
 
@@ -153,6 +153,36 @@ Aliases may be provided where useful. Examples:
 ```
 
 Aliases are not separate implementations.
+
+## M5 customer-command behavior
+
+M5 registers functional customer handlers for `/hours`, `/locations`, `/location`,
+`/directions`, `/contact`, `/faq`, `/payments`, `/policies`, `/age`, `/clear`, and
+`/about`. They execute only through the central command executor. `/open` and
+`/closing` resolve to `/hours`; `/map` and `/address` resolve to `/directions`.
+
+Location lists contain active same-tenant locations in deterministic name order and
+mark the current selection. `/location <name>` matches an exact display name after
+case-folding and collapsing whitespace; duplicate normalized names are rejected as
+ambiguous. Location-sensitive commands require an active selected location and direct
+the customer to `/locations` and `/location` when none is selected. `/hours` shows
+ordinary weekly hours, including closed or unconfigured days; it does not claim
+current open status or invent holiday hours. `/directions` builds an encoded maps URL
+from the configured address and makes no external API request.
+
+`/contact` uses the selected location's public phone when configured, otherwise the
+business phone, plus the business website and location address when present. `/faq`
+lists and searches enabled public business FAQs; a selected location's matching FAQ
+overrides the business-wide entry. Search is deterministic and never generates
+answers. `/payments` and `/policies` render only explicitly configured business data.
+
+`/age` renders the active M3 compliance-profile notices and session status. For
+Oregon cannabis, the 21+ website/session attestation is not ID or transaction
+verification, does not replace retailer/POS checks, and does not claim to cover
+qualifying OMMP pathways. `/about` uses the configured assistant name and current
+available command metadata. Missing information does not disable a command; the
+`directions_enabled`, `faq_enabled`, `payments_info_enabled`, and
+`policies_info_enabled` business flags control only those respective capabilities.
 
 ## Admin commands
 
@@ -294,10 +324,10 @@ command-name parsing, aliases, customer/admin scope separation, argument metadat
 permission and feature requirements, M3 compliance-capability hooks, deterministic
 introspection, and dynamic `/help`.
 
-Only customer and admin `/help` are registered as executable built-ins in M4. The
-other V1 names below remain protected for their later milestones, but protection does
-not make them registered, executable, visible in help, or available to autocomplete.
-Unknown and unavailable commands fail closed.
+M4 introduced customer and admin `/help`. M5 registers the real customer information
+commands described above. Later-milestone names remain protected but are not
+executable, visible in help, or autocomplete options. Unknown and unavailable
+commands fail closed.
 
 Customer command execution and autocomplete use the existing tenant and customer
 session boundaries. The bounded M4 HTTP API does not expose admin execution because
@@ -305,32 +335,32 @@ production authentication does not exist yet. Admin command contexts and permiss
 evaluation are explicit framework inputs for later authenticated integration; the
 development tenant header is not authentication.
 
-Feature requirements are evaluated from a request-level feature set, and compliance
-requirements delegate to the M3 `ComplianceEngine`. Safe future custom commands have
-a declarative action shape (`knowledge_response`, `external_link`, or
-`location_info`) and protected-name validation, but M4 does not persist or execute
-custom commands.
+Customer feature requirements resolve from persisted business flags after live
+tenant/session validation; compliance requirements delegate to the M3
+`ComplianceEngine`. Safe future custom commands have a declarative action shape
+(`knowledge_response`, `external_link`, or `location_info`) and protected-name
+validation, but are not persisted or executed.
 
 ## V1 command checklist
 
 ### Customer
 
 - [x] `/help`
-- [ ] `/hours`
-- [ ] `/locations`
-- [ ] `/location`
-- [ ] `/directions`
-- [ ] `/contact`
-- [ ] `/faq`
 - [ ] `/products`
 - [ ] `/search`
 - [ ] `/categories`
 - [ ] `/deals`
-- [ ] `/payments`
-- [ ] `/policies`
-- [ ] `/age`
-- [ ] `/clear`
-- [ ] `/about`
+- [x] `/hours`
+- [x] `/locations`
+- [x] `/location`
+- [x] `/directions`
+- [x] `/contact`
+- [x] `/faq`
+- [x] `/payments`
+- [x] `/policies`
+- [x] `/age`
+- [x] `/clear`
+- [x] `/about`
 
 ### Admin
 

@@ -213,6 +213,13 @@ Acceptance:
 - assistant display name is honored;
 - help/autocomplete metadata is correct.
 
+Implementation notes: Alembic revision `0004_m5_customer_information` adds the FAQ
+table, configured payment/policy data, and four business capability flags with enabled
+defaults. FAQ access is tenant-scoped and location overrides are deterministic.
+Location selection goes through the M3 locked session update; `/clear` is an honest
+no-op until conversational history exists and preserves session/compliance state.
+Focused M5 tests cover aliases, location behavior, FAQ visibility/overrides, and age state.
+
 ### M6 - Product/catalog command capability
 
 Scope:

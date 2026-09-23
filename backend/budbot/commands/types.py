@@ -69,7 +69,7 @@ class CommandExecutionContext:
     customer_session_id: UUID | None = None
     customer_session: CustomerSession | None = None
     permission_context: PermissionContext = field(default_factory=PermissionContext)
-    features: frozenset[str] = field(default_factory=frozenset)
+    features: frozenset[str] | None = None
 
 
 @dataclass(frozen=True, slots=True)

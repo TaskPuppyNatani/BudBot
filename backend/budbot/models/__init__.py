@@ -1,4 +1,5 @@
 """Import M2 models so SQLAlchemy and Alembic receive complete metadata."""
+from budbot.models.knowledge import FAQEntry
 
 from budbot.models.assistant import AssistantConfiguration, LocationAssistantOverride
 from budbot.models.business import Business
@@ -11,6 +12,7 @@ __all__ = [
     "Business",
     "BusinessMembership",
     "CustomerSession",
+    "FAQEntry",
     "Location",
     "LocationAssistantOverride",
     "LocationHours",

@@ -20,6 +20,7 @@ from budbot.compliance.engine import ComplianceEngine
 from budbot.core.exceptions import CommandError, ComplianceError
 from budbot.services.assistant_service import AssistantService
 from budbot.services.session_service import SessionService
+from budbot.services.business_service import BusinessService
 
 
 _HIDDEN_COMPLIANCE_DENIALS = {
@@ -100,7 +101,7 @@ class CommandExecutor:
         self, context: CommandExecutionContext
     ) -> CommandExecutionContext:
         if context.scope is not CommandScope.CUSTOMER:
-            return context
+            return replace(context, features=context.features or frozenset())
         session_id = context.customer_session_id
         if context.customer_session is not None:
             context.tenant.require_business(context.customer_session.business_id)
@@ -118,10 +119,21 @@ class CommandExecutor:
                 "the customer session has expired; create a new session",
                 status_code=410,
             )
+        features = context.features
+        if features is None:
+            business = await BusinessService(context.session).get(
+                context.tenant, context.tenant.business_id
+            )
+            feature_names = (
+                "directions_enabled", "faq_enabled", "payments_info_enabled",
+                "policies_info_enabled",
+            )
+            features = frozenset(name for name in feature_names if getattr(business, name))
         return replace(
             context,
             customer_session_id=session_id,
             customer_session=customer_session,
+            features=features,
         )
 
     async def _authorize(

@@ -51,8 +51,19 @@ async def test_customer_help_and_autocomplete_expose_only_real_commands(
     body = executed.json()
     assert body["canonical_name"] == "help"
     assert body["output"].startswith("Cedar Guide commands:")
-    assert [command["name"] for command in body["commands"]] == ["help"]
+    assert [command["name"] for command in body["commands"]] == [
+        "about", "age", "clear", "contact", "directions", "faq", "help",
+        "hours", "location", "locations", "payments", "policies",
+    ]
     assert "/products" not in body["output"]
+    faq_response = await m2_client.post(
+        "/api/v1/commands/execute",
+        headers=_tenant_header(business_id),
+        json={"session_id": session_id, "input": "/faq"},
+    )
+    assert faq_response.status_code == 200, faq_response.text
+    assert faq_response.json()["canonical_name"] == "faq"
+    assert "No public FAQs are configured." in faq_response.json()["output"]
 
     metadata = await m2_client.get(
         "/api/v1/commands",
@@ -60,16 +71,11 @@ async def test_customer_help_and_autocomplete_expose_only_real_commands(
         params={"session_id": session_id},
     )
     assert metadata.status_code == 200
-    assert metadata.json() == [
-        {
-            "name": "help",
-            "description": "Show commands available in the current customer context.",
-            "aliases": [],
-            "scope": "customer",
-            "argument_hint": "",
-            "available": True,
-        }
-    ]
+    entries = metadata.json()
+    assert [entry["name"] for entry in entries] == [command["name"] for command in body["commands"]]
+    assert entries[4]["aliases"] == ["map", "address"]
+    assert entries[7]["aliases"] == ["open", "closing"]
+    assert all(entry["available"] for entry in entries)
 
 
 async def test_command_api_normalizes_invalid_unknown_and_cross_tenant_errors(

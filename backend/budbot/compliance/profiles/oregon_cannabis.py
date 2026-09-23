@@ -28,6 +28,10 @@ OREGON_CANNABIS_PROFILE = ComplianceProfile(
         "legal proof of age, purchase authorization, or a replacement for retailer "
         "or POS identification checks. OMMP verification is not implemented."
     ),
+    medical_eligibility_notice=(
+        "Oregon has qualifying OMMP pathways for some people ages 18–20; this "
+        "assistant does not verify OMMP eligibility."
+    ),
     capability_rules={
         ComplianceCapability.BUSINESS_HOURS: CapabilityRule(
             CapabilityPolicy.PUBLIC, "PUBLIC_CAPABILITY"

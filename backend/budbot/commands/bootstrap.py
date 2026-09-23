@@ -3,6 +3,7 @@
 from budbot.commands.executor import CommandExecutor
 from budbot.commands.registry import CommandRegistry
 from budbot.commands.types import CommandDefinition, CommandScope
+from budbot.commands.customer.registration import register_customer_commands
 
 
 ADMIN_HELP_PERMISSION = "commands:read"
@@ -28,4 +29,5 @@ def build_command_executor() -> CommandExecutor:
             required_permissions=frozenset({ADMIN_HELP_PERMISSION}),
         )
     )
+    register_customer_commands(registry, executor)
     return executor
