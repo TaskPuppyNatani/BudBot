@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, JSON, String, true
+from sqlalchemy import Boolean, CheckConstraint, JSON, String, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from budbot.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -18,6 +18,12 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Top-level tenant and security boundary."""
 
     __tablename__ = "businesses"
+    __table_args__ = (
+        CheckConstraint(
+            "compliance_domain IN ('general_retail', 'cannabis')",
+            name="ck_businesses_compliance_domain",
+        ),
+    )
 
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     legal_name: Mapped[str | None] = mapped_column(String(250))
@@ -52,6 +58,12 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(50),
         default="1.0",
         server_default="1.0",
+        nullable=False,
+    )
+    compliance_domain: Mapped[str] = mapped_column(
+        String(32),
+        default="general_retail",
+        server_default="general_retail",
         nullable=False,
     )
 

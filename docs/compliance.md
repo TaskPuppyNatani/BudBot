@@ -1,9 +1,9 @@
 # BudBot Compliance Architecture
 
 Status: V1 project contract  
-Last updated: 2026-09-19
+Last updated: 2026-09-23
 
-> This document is an engineering compliance specification, not legal advice. Cannabis rules can change. Production deployments should be reviewed against current law, OLCC guidance, and the business's legal/compliance requirements.
+> This document is an engineering compliance specification, not legal advice. Cannabis rules can change. Production deployments should be reviewed against current law, OLCC and NM CCD guidance, and the business's legal/compliance requirements.
 
 ## Goal
 
@@ -11,8 +11,13 @@ Compliance is a first-class backend subsystem, not a prompt-only behavior.
 
 BudBot must support versioned compliance profiles. The initial profiles are:
 
-- `general_retail`;
-- `oregon_cannabis`.
+- `general_retail@1.0`;
+- `oregon_cannabis@1.0`;
+- `new_mexico_cannabis@1.0`.
+
+Profiles declare a compliance domain and either global applicability or one
+canonical jurisdiction. Domains are `general_retail` and `cannabis`; business
+industry labels are descriptive and are never legal-policy identifiers.
 
 Future jurisdictions/verticals should be added as separate versioned profiles rather than by forking the application.
 
@@ -120,12 +125,9 @@ version, an explicit age-gate state, an attestation timestamp when submitted,
 and a bounded expiration timestamp. It stores no date of birth, government ID,
 ID image, or customer legal name.
 
-The initial profile versions are `general_retail@1.0` and
-`oregon_cannabis@1.0`. Existing businesses are backfilled to
-`general_retail@1.0`. A profile change does not rewrite existing sessions;
-the compliance engine rejects a session whose stored profile snapshot no
-longer matches the business's active profile with
-`COMPLIANCE_PROFILE_MISMATCH`. A new session is required.
+M3 initially stored one business-selected profile. M5.5 deliberately replaces
+that business-wide jurisdiction assumption while preserving session snapshots
+and `COMPLIANCE_PROFILE_MISMATCH` for stale bindings. See the M5.5 section below.
 
 The session API accepts `confirmed_21_or_older` only for the website/session
 attestation flow. A positive Oregon attestation moves a new session to
@@ -133,6 +135,58 @@ attestation flow. A positive Oregon attestation moves a new session to
 sessions cannot be upgraded in place. The attestation is not transaction-level
 ID verification or purchase authorization, and OMMP verification remains
 deferred.
+
+## M5.5 multi-jurisdiction resolution
+
+`Business.compliance_domain` is the policy-domain selector. `Location.region`
+remains display text; `country` plus an explicitly supplied, normalized
+two-letter `region_code` determines a code such as `US-OR` or `US-NM`. Existing
+locations are not guessed from free text: their new region code stays null until
+configured. The Alembic M5.5 migration maps a legacy `oregon_cannabis` business
+to `cannabis`; legacy business profile ID/version remain for M3 API and
+configuration compatibility, but never select a cannabis location's policy.
+
+One immutable, declarative profile catalog and `ComplianceResolver` select the
+active profile by domain and jurisdiction. General retail resolves to its
+global profile and has no cannabis age gate. Cannabis locations resolve as
+`US-OR -> oregon_cannabis@1.0` and
+`US-NM -> new_mexico_cannabis@1.0`. No selected cannabis location yields
+`COMPLIANCE_LOCATION_REQUIRED`; a missing canonical code or unconfigured
+jurisdiction yields `COMPLIANCE_PROFILE_UNAVAILABLE`. Neither case falls back
+to Oregon. A small explicit set of public-information capabilities remains
+available; regulated, unknown, and prohibited capabilities remain closed.
+
+Sessions snapshot `(compliance_domain, jurisdiction_code, profile_id,
+profile_version)` plus resolution status. A location change is serialized by
+locking the session, business configuration, and selected location. If that
+fingerprint changes, the binding is refreshed, the age gate is initialized for
+the new resolution, and its attestation timestamp is cleared. A same-fingerprint
+switch (for example Portland to Salem) preserves valid verification. An active
+catalog version change makes old sessions stale; protected capabilities reject
+them until a fresh session or explicit location rebind establishes the new
+binding. Location-scoped profile overrides are not persisted in M5.5; the
+resolver has a validated future override seam but user-supplied IDs cannot
+choose profiles.
+
+The New Mexico adult-use website flow requires a 21+ session attestation.
+This is not a claim that every lawful New Mexico cannabis customer must be 21:
+the CCD describes a separate medical pathway for qualifying patients from age
+18, subject to program requirements and valid patient/government identification.
+BudBot does not verify medical eligibility, registry cards, government ID, or
+purchase eligibility. The profile records reviewed regulator sources and does
+not implement the full New Mexico advertising rule engine.
+
+Future profile distribution uses a trusted registry and signed/versioned,
+schema-validated declarative packages: validate schema, signature/trust, and
+compatibility; stage; then explicitly or policy-activate. Profile packages
+cannot contain executable code. `/compliance status`, `/check`, `/update`, and
+`/sources` are future informational/update operations. A tenant-submitted
+regulator URL may become source metadata or a review request only; it must
+never directly rewrite or activate live rules. Hosted and self-hosted
+deployments may consume the same trusted packages; self-hosted installations
+may use cached validated profiles offline. No network updater is included here.
+The M5.5 downgrade intentionally refuses to run while cannabis tenants exist,
+because M5 cannot safely represent jurisdiction-specific session bindings.
 
 ## Request enforcement
 
@@ -248,3 +302,14 @@ Reviewed 2026-09-19:
   https://cms.oregon.gov/olcc/docs/publications/Acceptable_ID_Marijuana_English.pdf
 
 Before a production release, re-check the current official rule text rather than assuming this draft remains current.
+
+## New Mexico source references
+
+Reviewed 2026-09-23:
+
+- New Mexico Regulation and Licensing Department, Cannabis Control Division FAQs:
+  https://www.rld.nm.gov/cannabis/cannabis-in-new-mexico/faqs/
+- CCD Industry Bulletin 25-15:
+  https://www.rld.nm.gov/wp-content/uploads/2025/10/25-15.pdf
+- New Mexico Administrative Code 16.8.3, packaging, labeling, advertising, marketing, and display:
+  https://www.srca.nm.gov/parts/title16/16.008.0003.html

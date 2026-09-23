@@ -27,11 +27,20 @@ class BusinessService:
         await self.session.refresh(business)
         return business
 
-    async def get(self, tenant: TenantContext, business_id: UUID) -> Business:
+    async def get(
+        self,
+        tenant: TenantContext,
+        business_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> Business:
         tenant.require_business(business_id)
-        business = await self.session.scalar(
-            select(Business).where(Business.id == tenant.business_id)
-        )
+        statement = select(Business).where(Business.id == tenant.business_id)
+        if for_update:
+            statement = statement.with_for_update().execution_options(
+                populate_existing=True
+            )
+        business = await self.session.scalar(statement)
         if business is None:
             raise ResourceNotFound("business")
         return business

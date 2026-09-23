@@ -37,17 +37,18 @@ class LocationService:
         statement = statement.order_by(Location.display_name, Location.id)
         return list((await self.session.scalars(statement)).all())
 
-    async def get(self, location_id: UUID) -> Location:
+    async def get(self, location_id: UUID, *, for_update: bool = False) -> Location:
         return await self.locations.get(
             location_id,
             options=(selectinload(Location.hours),),
             resource_name="location",
+            for_update=for_update,
         )
 
     async def update(
         self, location_id: UUID, payload: LocationUpdate
     ) -> Location:
-        location = await self.get(location_id)
+        location = await self.get(location_id, for_update=True)
         values = payload.model_dump(exclude_unset=True, exclude={"hours"}, mode="python")
         for field, value in values.items():
             setattr(location, field, value)
@@ -60,7 +61,7 @@ class LocationService:
         return location
 
     async def deactivate(self, location_id: UUID) -> Location:
-        location = await self.get(location_id)
+        location = await self.get(location_id, for_update=True)
         location.active = False
         await self.session.flush()
         await self.session.refresh(location, attribute_names=["updated_at"])

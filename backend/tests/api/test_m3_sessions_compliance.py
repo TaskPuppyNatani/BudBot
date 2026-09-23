@@ -38,6 +38,7 @@ def location_payload(name: str) -> dict[str, object]:
         "region": "OR",
         "postal_code": "97201",
         "country": "us",
+        "region_code": "OR",
         "timezone": "America/Los_Angeles",
     }
 
@@ -176,14 +177,27 @@ async def test_session_creation_is_opaque_tenant_scoped_and_snapshots_profile(
     assert "date_of_birth" not in general_session
     assert "government_id" not in general_session
 
+    cannabis_location = await create_location(m2_client, cannabis_id, "Oregon")
     cannabis_session_response = await m2_client.post(
-        "/api/v1/sessions", headers=tenant_header(cannabis_id), json={}
+        "/api/v1/sessions",
+        headers=tenant_header(cannabis_id),
+        json={"selected_location_id": cannabis_location["id"]},
     )
     assert cannabis_session_response.status_code == 201
     cannabis_session = cannabis_session_response.json()
     assert cannabis_session["compliance_profile_id"] == "oregon_cannabis"
     assert cannabis_session["compliance_profile_version"] == "1.0"
+    assert cannabis_session["compliance_domain"] == "cannabis"
+    assert cannabis_session["compliance_jurisdiction_code"] == "US-OR"
     assert cannabis_session["age_gate_status"] == AgeGateStatus.REQUIRED_UNVERIFIED
+
+    unresolved_response = await m2_client.post(
+        "/api/v1/sessions", headers=tenant_header(cannabis_id), json={}
+    )
+    assert unresolved_response.status_code == 201
+    unresolved_session = unresolved_response.json()
+    assert unresolved_session["compliance_profile_id"] is None
+    assert unresolved_session["compliance_resolution_status"] == "location_required"
 
     cross_read = await m2_client.get(
         f"/api/v1/sessions/{cannabis_session['id']}",
@@ -270,14 +284,8 @@ async def test_profile_version_only_change_invalidates_session(
 ) -> None:
     from dataclasses import replace
 
+    import budbot.compliance.registry as registry
     from budbot.compliance.profiles.general_retail import GENERAL_RETAIL_PROFILE
-    from budbot.compliance.registry import COMPLIANCE_PROFILES
-
-    monkeypatch.setitem(
-        COMPLIANCE_PROFILES,
-        ("general_retail", "2.0"),
-        replace(GENERAL_RETAIL_PROFILE, version="2.0"),
-    )
 
     business = await create_business(m2_client, "Versioned")
     business_id = str(business["id"])
@@ -287,13 +295,19 @@ async def test_profile_version_only_change_invalidates_session(
     assert created.status_code == 201
     session_id = created.json()["id"]
 
+    new_version = replace(GENERAL_RETAIL_PROFILE, version="2.0", active=False)
+    monkeypatch.setattr(
+        registry,
+        "COMPLIANCE_CATALOG",
+        registry.get_catalog().with_profile(new_version).activate(
+            "general_retail", "2.0"
+        ),
+    )
+
     stored_business = await db_session.scalar(
         select(Business).where(Business.id == UUID(business_id))
     )
     assert stored_business is not None
-    stored_business.compliance_profile_version = "2.0"
-    await db_session.flush()
-
     stale = await m2_client.get(
         f"/api/v1/sessions/{session_id}",
         headers=tenant_header(business_id),
@@ -311,8 +325,11 @@ async def test_age_gate_and_direct_http_enforcement(
     business = await create_business(m2_client, "Oregon")
     business_id = str(business["id"])
     await configure_profile(m2_client, business_id, "oregon_cannabis")
+    location = await create_location(m2_client, business_id, "Portland")
     created = await m2_client.post(
-        "/api/v1/sessions", headers=tenant_header(business_id), json={}
+        "/api/v1/sessions",
+        headers=tenant_header(business_id),
+        json={"selected_location_id": location["id"]},
     )
     session_id = created.json()["id"]
     headers = tenant_header(business_id)
@@ -382,8 +399,11 @@ async def test_denial_is_persisted_and_cannot_be_upgraded(
     business = await create_business(m2_client, "Denied")
     business_id = str(business["id"])
     await configure_profile(m2_client, business_id, "oregon_cannabis")
+    location = await create_location(m2_client, business_id, "Portland")
     created = await m2_client.post(
-        "/api/v1/sessions", headers=tenant_header(business_id), json={}
+        "/api/v1/sessions",
+        headers=tenant_header(business_id),
+        json={"selected_location_id": location["id"]},
     )
     session_id = created.json()["id"]
     headers = tenant_header(business_id)

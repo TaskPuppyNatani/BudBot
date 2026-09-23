@@ -17,6 +17,7 @@ from budbot.commands.types import (
 )
 from budbot.compliance.age_gate import AgeGateStatus
 from budbot.compliance.engine import ComplianceEngine
+from budbot.compliance.types import SAFE_PUBLIC_CAPABILITIES
 from budbot.core.exceptions import CommandError, ComplianceError
 from budbot.services.assistant_service import AssistantService
 from budbot.services.session_service import SessionService
@@ -49,7 +50,12 @@ class CommandExecutor:
                 "COMMAND_INVALID", "command execution requires slash-command input"
             )
         definition = self.registry.resolve(parsed.canonical_name, context.scope)
-        prepared = await self._prepare_context(context)
+        prepared = await self._prepare_context(
+            context,
+            validate_binding=(
+                definition.compliance_capability not in SAFE_PUBLIC_CAPABILITIES
+            ),
+        )
         await self._authorize(definition, prepared)
         definition.arguments.validate(parsed.arguments)
         return await definition.handler(prepared, parsed)
@@ -98,7 +104,10 @@ class CommandExecutor:
         )
 
     async def _prepare_context(
-        self, context: CommandExecutionContext
+        self,
+        context: CommandExecutionContext,
+        *,
+        validate_binding: bool = True,
     ) -> CommandExecutionContext:
         if context.scope is not CommandScope.CUSTOMER:
             return replace(context, features=context.features or frozenset())
@@ -112,7 +121,7 @@ class CommandExecutor:
             )
         customer_session = await SessionService(
             context.session, context.tenant
-        ).get(session_id)
+        ).get(session_id, validate_binding=validate_binding)
         if customer_session.age_gate_status == AgeGateStatus.EXPIRED:
             raise ComplianceError(
                 "SESSION_EXPIRED",

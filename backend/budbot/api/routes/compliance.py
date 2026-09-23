@@ -30,12 +30,16 @@ def _read(profile: ComplianceProfile) -> ComplianceProfileRead:
         profile_id=profile.profile_id,
         version=profile.version,
         jurisdiction=profile.jurisdiction,
+        compliance_domain=str(profile.compliance_domain),
+        jurisdiction_code=profile.jurisdiction_code,
+        format_version=profile.format_version,
         effective_from=profile.effective_from,
         reviewed_at=profile.reviewed_at,
         source_references=list(profile.source_references),
         requires_age_gate=profile.requires_age_gate,
         minimum_age=profile.minimum_age,
         website_attestation_notice=profile.website_attestation_notice,
+        medical_eligibility_notice=profile.medical_eligibility_notice,
     )
 
 

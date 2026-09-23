@@ -41,6 +41,20 @@ class CustomerSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             f"age_gate_status IN ({_AGE_GATE_STATUS_SQL})",
             name="ck_customer_sessions_age_gate_status",
         ),
+        CheckConstraint(
+            "compliance_domain IN ('general_retail', 'cannabis')",
+            name="ck_customer_sessions_compliance_domain",
+        ),
+        CheckConstraint(
+            "(compliance_profile_id IS NULL AND compliance_profile_version IS NULL) OR "
+            "(compliance_profile_id IS NOT NULL AND compliance_profile_version IS NOT NULL)",
+            name="ck_customer_sessions_compliance_profile_pair",
+        ),
+        CheckConstraint(
+            "compliance_resolution_status IN "
+            "('resolved', 'location_required', 'profile_unavailable', 'invalid_override')",
+            name="ck_customer_sessions_compliance_resolution_status",
+        ),
     )
 
     business_id: Mapped[UUID] = mapped_column(
@@ -52,11 +66,24 @@ class CustomerSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     selected_location_id: Mapped[UUID | None] = mapped_column(
         Uuid, index=True
     )
-    compliance_profile_id: Mapped[str] = mapped_column(
-        String(100), nullable=False
+    compliance_domain: Mapped[str] = mapped_column(
+        String(32),
+        default="general_retail",
+        server_default="general_retail",
+        nullable=False,
     )
-    compliance_profile_version: Mapped[str] = mapped_column(
-        String(50), nullable=False
+    compliance_jurisdiction_code: Mapped[str | None] = mapped_column(String(16))
+    compliance_profile_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    compliance_profile_version: Mapped[str | None] = mapped_column(
+        String(50), nullable=True
+    )
+    compliance_resolution_status: Mapped[str] = mapped_column(
+        String(32),
+        default="resolved",
+        server_default="resolved",
+        nullable=False,
     )
     age_gate_status: Mapped[AgeGateStatus] = mapped_column(
         String(32),
@@ -74,13 +101,13 @@ class CustomerSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     business: Mapped["Business"] = relationship(back_populates="customer_sessions")
 
     @property
-    def active_compliance_profile_id(self) -> str:
+    def active_compliance_profile_id(self) -> str | None:
         """Compatibility/readability alias for the stored profile snapshot."""
 
         return self.compliance_profile_id
 
     @property
-    def active_compliance_profile_version(self) -> str:
+    def active_compliance_profile_version(self) -> str | None:
         """Compatibility/readability alias for the stored profile snapshot."""
 
         return self.compliance_profile_version

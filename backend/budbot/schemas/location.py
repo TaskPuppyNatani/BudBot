@@ -1,9 +1,10 @@
 """Location and normalized weekly-hours schemas."""
 
 from datetime import datetime, time
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from budbot.schemas.common import (
     AddressLine,
@@ -16,6 +17,8 @@ from budbot.schemas.common import (
     validate_phone,
     validate_timezone,
 )
+
+RegionCode = Annotated[str, StringConstraints(pattern=r"^[A-Za-z]{2}$")]
 
 
 class LocationHoursInput(DomainSchema):
@@ -55,6 +58,7 @@ class LocationCreate(DomainSchema):
     region: Region
     postal_code: PostalCode
     country: CountryCode
+    region_code: RegionCode | None = None
     phone: str | None = None
     timezone: str
     active: bool = True
@@ -69,6 +73,11 @@ class LocationCreate(DomainSchema):
     @classmethod
     def normalize_country(cls, value: str) -> str:
         return value.upper()
+
+    @field_validator("region_code")
+    @classmethod
+    def normalize_region_code(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
 
     @field_validator("hours")
     @classmethod
@@ -87,6 +96,7 @@ class LocationUpdate(DomainSchema):
     region: Region | None = None
     postal_code: PostalCode | None = None
     country: CountryCode | None = None
+    region_code: RegionCode | None = None
     phone: str | None = None
     timezone: str | None = None
     active: bool | None = None
@@ -101,6 +111,11 @@ class LocationUpdate(DomainSchema):
     @classmethod
     def normalize_country(cls, value: str | None) -> str | None:
         return value.upper() if value else None
+
+    @field_validator("region_code")
+    @classmethod
+    def normalize_region_code(cls, value: str | None) -> str | None:
+        return value.upper() if value is not None else None
 
     @field_validator("hours")
     @classmethod
@@ -145,6 +160,7 @@ class LocationRead(DomainSchema):
     region: str
     postal_code: str
     country: str
+    region_code: str | None
     phone: str | None
     timezone: str
     active: bool

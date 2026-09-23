@@ -127,7 +127,10 @@ Show customer-facing store policies.
 
 Explain the active age requirement and age-gate status in clear language.
 
-For Oregon cannabis, this command must not imply that website age attestation replaces legally required purchase/acquisition ID verification.
+The command reports the effective selected-location profile. With no selected
+cannabis location it asks the visitor to choose one; an unsupported jurisdiction
+is reported as unavailable without borrowing another jurisdiction's rules.
+Website/session attestation must never be described as purchase-ID verification.
 
 ### `/clear`
 
@@ -270,7 +273,12 @@ Open or provide a preview of the current customer experience using effective bra
 
 ### `/compliance`
 
-Show the active compliance profile, version, important enforced controls, and source/update metadata.
+Future informational/update subcommands may include `/compliance status`,
+`/compliance check`, `/compliance update`, and `/compliance sources`.
+
+A submitted regulator URL is source metadata or a review request only. It must
+never directly rewrite or activate live compliance rules; activation requires a
+trusted, authenticated, schema-valid declarative profile package.
 
 This command is informational. Mandatory compliance controls cannot be disabled through it.
 

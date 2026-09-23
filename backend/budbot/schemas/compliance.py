@@ -28,9 +28,13 @@ class ComplianceProfileRead(DomainSchema):
     profile_id: str
     version: str
     jurisdiction: str
+    compliance_domain: str
+    jurisdiction_code: str | None
+    format_version: int
     effective_from: date
     reviewed_at: date
     source_references: list[str] = Field(default_factory=list)
     requires_age_gate: bool
     minimum_age: int | None
     website_attestation_notice: str
+    medical_eligibility_notice: str | None

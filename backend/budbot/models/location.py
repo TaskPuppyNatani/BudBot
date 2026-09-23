@@ -1,6 +1,7 @@
 """Physical locations and normalized weekly hours."""
 
 from datetime import time
+import re
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from sqlalchemy import (
     Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import validates
 
 from budbot.database.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -30,6 +32,10 @@ class Location(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "locations"
     __table_args__ = (
         UniqueConstraint("id", "business_id", name="uq_locations_id_business"),
+        CheckConstraint(
+            "region_code IS NULL OR (length(region_code) = 2 AND region_code = upper(region_code))",
+            name="ck_locations_region_code_canonical",
+        ),
     )
 
     business_id: Mapped[UUID] = mapped_column(
@@ -42,11 +48,28 @@ class Location(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     region: Mapped[str] = mapped_column(String(100), nullable=False)
     postal_code: Mapped[str] = mapped_column(String(30), nullable=False)
     country: Mapped[str] = mapped_column(String(2), nullable=False)
+    region_code: Mapped[str | None] = mapped_column(String(2))
     phone: Mapped[str | None] = mapped_column(String(40))
     timezone: Mapped[str] = mapped_column(String(100), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     maps_place_id: Mapped[str | None] = mapped_column(String(255))
     maps_destination: Mapped[str | None] = mapped_column(String(2048))
+
+    @validates("country")
+    def normalize_country(self, _key: str, value: str) -> str:
+        normalized = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", normalized):
+            raise ValueError("country must be a two-letter code")
+        return normalized
+
+    @validates("region_code")
+    def normalize_region_code(self, _key: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", normalized):
+            raise ValueError("region_code must be a two-letter canonical code")
+        return normalized
 
     business: Mapped["Business"] = relationship(back_populates="locations")
     hours: Mapped[list["LocationHours"]] = relationship(

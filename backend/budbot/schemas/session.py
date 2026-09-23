@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from budbot.compliance.age_gate import AgeGateStatus
+from budbot.compliance.resolver import ComplianceResolutionStatus
 from budbot.schemas.common import DomainSchema
 
 
@@ -29,8 +30,11 @@ class CustomerSessionRead(DomainSchema):
     id: UUID
     business_id: UUID
     selected_location_id: UUID | None
-    compliance_profile_id: str
-    compliance_profile_version: str
+    compliance_domain: str
+    compliance_jurisdiction_code: str | None
+    compliance_profile_id: str | None
+    compliance_profile_version: str | None
+    compliance_resolution_status: ComplianceResolutionStatus
     age_gate_status: AgeGateStatus
     age_attested_at: datetime | None
     expires_at: datetime

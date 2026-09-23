@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
+import re
+from types import MappingProxyType
 from typing import Mapping
 
 from budbot.core.exceptions import ComplianceError
@@ -14,6 +16,13 @@ class CapabilityPolicy(StrEnum):
     PUBLIC = "public"
     AGE_GATED = "age_gated"
     PROHIBITED = "prohibited"
+
+
+class ComplianceDomain(StrEnum):
+    """Small stable policy domains, deliberately separate from industry text."""
+
+    GENERAL_RETAIL = "general_retail"
+    CANNABIS = "cannabis"
 
 
 class ComplianceCapability(StrEnum):
@@ -35,6 +44,15 @@ class ComplianceCapability(StrEnum):
 
 
 Capability = ComplianceCapability
+
+SAFE_PUBLIC_CAPABILITIES = frozenset(
+    {
+        ComplianceCapability.BUSINESS_HOURS,
+        ComplianceCapability.LOCATIONS,
+        ComplianceCapability.CONTACT,
+        ComplianceCapability.AGE_INFORMATION,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +78,37 @@ class ComplianceProfile:
     website_attestation_notice: str
     capability_rules: Mapping[ComplianceCapability, CapabilityRule]
     medical_eligibility_notice: str | None = None
+    compliance_domain: ComplianceDomain = ComplianceDomain.GENERAL_RETAIL
+    jurisdiction_code: str | None = None
+    format_version: int = 1
+    active: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.profile_id.strip() or not self.version.strip():
+            raise ValueError("compliance profile ID and version are required")
+        if self.format_version < 1:
+            raise ValueError("compliance profile format version must be positive")
+        if self.requires_age_gate and self.minimum_age is None:
+            raise ValueError("age-gated profiles must declare a minimum age")
+        if not self.requires_age_gate and self.minimum_age is not None:
+            raise ValueError("profiles without an age gate cannot declare a minimum age")
+        domain = ComplianceDomain(self.compliance_domain)
+        if domain is ComplianceDomain.GENERAL_RETAIL and self.jurisdiction_code is not None:
+            raise ValueError("general-retail profiles must be jurisdiction-neutral")
+        if domain is ComplianceDomain.CANNABIS and (
+            self.jurisdiction_code is None
+            or not re.fullmatch(r"[A-Z]{2}-[A-Z]{2}", self.jurisdiction_code)
+        ):
+            raise ValueError("cannabis profiles require a canonical jurisdiction code")
+        if self.reviewed_at < self.effective_from:
+            raise ValueError("profile review date cannot precede its effective date")
+        if not self.source_references:
+            raise ValueError("compliance profiles require source metadata")
+        object.__setattr__(self, "compliance_domain", domain)
+        object.__setattr__(self, "source_references", tuple(self.source_references))
+        object.__setattr__(
+            self, "capability_rules", MappingProxyType(dict(self.capability_rules))
+        )
 
     def initial_age_gate_status(self) -> str:
         """Return the initial persisted age state without importing the model."""

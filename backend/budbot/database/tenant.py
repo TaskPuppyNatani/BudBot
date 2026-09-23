@@ -45,7 +45,9 @@ class TenantScopedRepository(Generic[ModelT]):
         identifier: InstrumentedAttribute[UUID] = self.model.id  # type: ignore[attr-defined]
         statement = self.select().where(identifier == resource_id).options(*options)
         if for_update:
-            statement = statement.with_for_update()
+            statement = statement.with_for_update().execution_options(
+                populate_existing=True
+            )
         resource = await self.session.scalar(statement)
         if resource is None:
             raise ResourceNotFound(resource_name)

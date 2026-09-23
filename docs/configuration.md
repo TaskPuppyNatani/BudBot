@@ -1,7 +1,7 @@
 # BudBot Configuration Model
 
 Status: V1 project contract  
-Last updated: 2026-09-19
+Last updated: 2026-09-23
 
 ## Goal
 
@@ -88,6 +88,7 @@ city
 region/state
 postal_code
 country
+region_code             optional canonical two-letter region identifier
 phone                  optional
 timezone
 active
@@ -228,6 +229,16 @@ A business references a compliance profile:
 compliance_profile_id = "oregon_cannabis"
 compliance_profile_version = "..."
 ```
+
+M5.5 adds `Business.compliance_domain`, a validated `general_retail` or
+`cannabis` value. `industry` is not interpreted as a compliance domain. A
+location keeps its display `region`; its optional `region_code` is normalized
+to uppercase and combines with its two-letter `country` (for example `US-OR`).
+Existing locations are left unset by migration and must be explicitly
+configured before a cannabis profile can resolve. Legacy business profile
+fields remain readable/configurable for compatibility and domain selection,
+but cannabis jurisdiction profiles are selected from location/catalog
+applicability rather than that business-wide profile ID.
 
 Optional profile-approved settings may be configurable.
 

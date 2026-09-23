@@ -120,5 +120,6 @@ class BusinessRead(DomainSchema):
     policies_info_enabled: bool
     compliance_profile_id: str
     compliance_profile_version: str
+    compliance_domain: str
     created_at: datetime
     updated_at: datetime

@@ -27,10 +27,13 @@ class ComplianceService:
     async def configure(
         self, business_id: UUID, payload: ComplianceProfileUpdate
     ) -> ComplianceProfile:
-        business = await BusinessService(self.session).get(self.tenant, business_id)
+        business = await BusinessService(self.session).get(
+            self.tenant, business_id, for_update=True
+        )
         profile = get_profile(payload.profile_id)
         business.compliance_profile_id = profile.profile_id
         business.compliance_profile_version = profile.version
+        business.compliance_domain = str(profile.compliance_domain)
         await self.session.flush()
         await self.session.refresh(business)
         return profile

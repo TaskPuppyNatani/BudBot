@@ -1,39 +1,41 @@
-"""Initial Oregon recreational website/session profile."""
+"""Initial New Mexico recreational website/session profile."""
 
 from datetime import date
 
 from budbot.compliance.types import (
     CapabilityPolicy,
+    CapabilityRule,
     ComplianceCapability,
     ComplianceProfile,
-    CapabilityRule,
 )
 
 
-OREGON_CANNABIS_PROFILE = ComplianceProfile(
-    profile_id="oregon_cannabis",
+NEW_MEXICO_CANNABIS_PROFILE = ComplianceProfile(
+    profile_id="new_mexico_cannabis",
     version="1.0",
-    jurisdiction="Oregon, United States",
-    effective_from=date(2026, 9, 19),
-    reviewed_at=date(2026, 9, 19),
+    jurisdiction="New Mexico, United States",
+    effective_from=date(2022, 4, 1),
+    reviewed_at=date(2026, 9, 23),
     source_references=(
-        "docs/compliance.md",
-        "https://www.oregon.gov/olcc/marijuana/pages/frequently-asked-questions.aspx",
-        "https://secure.sos.state.or.us/oard/viewSingleRule.action?ruleVrsnRsn=255959",
+        "https://www.rld.nm.gov/cannabis/cannabis-in-new-mexico/faqs/",
+        "https://www.rld.nm.gov/wp-content/uploads/2025/10/25-15.pdf",
+        "https://www.srca.nm.gov/parts/title16/16.008.0003.html",
     ),
     requires_age_gate=True,
     minimum_age=21,
     website_attestation_notice=(
-        "This 21+ website/session attestation is not government-ID verification, "
-        "legal proof of age, purchase authorization, or a replacement for retailer "
-        "or POS identification checks. OMMP verification is not implemented."
+        "This 21+ website/session attestation is for the adult-use flow only. "
+        "It is not government-ID verification, legal proof of age, purchase "
+        "authorization, or a replacement for retailer or point-of-sale checks."
     ),
     medical_eligibility_notice=(
-        "Oregon has qualifying OMMP pathways for some people ages 18–20; this "
-        "assistant does not verify OMMP eligibility."
+        "New Mexico has a separate medical-cannabis pathway; qualifying patients "
+        "age 18+ may be eligible subject to program requirements and required "
+        "patient and government identification. BudBot does not verify medical "
+        "eligibility, patient registry cards, or identity."
     ),
     compliance_domain="cannabis",
-    jurisdiction_code="US-OR",
+    jurisdiction_code="US-NM",
     capability_rules={
         ComplianceCapability.BUSINESS_HOURS: CapabilityRule(
             CapabilityPolicy.PUBLIC, "PUBLIC_CAPABILITY"

@@ -4,6 +4,7 @@ from datetime import time
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import update
 
 from budbot.commands.bootstrap import build_command_executor
 from budbot.commands.types import CommandExecutionContext, CommandScope
@@ -25,6 +26,9 @@ async def _context(db_session, *, profile_id: str = "general_retail"):
         industry="general_retail",
         compliance_profile_id=profile_id,
         compliance_profile_version="1.0",
+        compliance_domain=(
+            "cannabis" if profile_id == "oregon_cannabis" else "general_retail"
+        ),
         main_phone="503-555-0100",
         website_url="https://cedar.example",
         payment_methods=[{"name": "Cash"}, {"name": "Debit", "details": "PIN required"}],
@@ -47,6 +51,7 @@ async def _context(db_session, *, profile_id: str = "general_retail"):
             address_line_1="10 Main St",
             city="Portland",
             region="OR",
+            region_code="OR",
             postal_code="97201",
             country="US",
             phone=phone,
@@ -115,7 +120,11 @@ async def _context(db_session, *, profile_id: str = "general_retail"):
     await db_session.flush()
     tenant = TenantContext(business.id)
     customer_session = await SessionService(db_session, tenant).create(
-        CustomerSessionCreate()
+        CustomerSessionCreate(
+            selected_location_id=(
+                selected_location.id if profile_id == "oregon_cannabis" else None
+            )
+        )
     )
     context = CommandExecutionContext(
         session=db_session,
@@ -352,8 +361,13 @@ async def test_contact_fallback_and_missing_optional_details_are_honest(
     location.city = ""
     location.region = ""
     location.postal_code = ""
-    location.country = ""
     await context.session.flush()
+    # Simulate a legacy/incomplete stored row without bypassing the ORM validator
+    # through normal attribute assignment.
+    await context.session.execute(
+        update(Location).where(Location.id == location.id).values(country="")
+    )
+    await context.session.refresh(location, attribute_names=["country"])
     no_contact = await executor.execute("/contact", context)
     assert no_contact.output == (
         "No public contact information is configured for Hawthorne."

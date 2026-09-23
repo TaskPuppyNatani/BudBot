@@ -1,7 +1,7 @@
 # BudBot Development Workflow
 
 Status: V1 project contract  
-Last updated: 2026-09-19
+Last updated: 2026-09-23
 
 ## Purpose
 
@@ -219,6 +219,18 @@ defaults. FAQ access is tenant-scoped and location overrides are deterministic.
 Location selection goes through the M3 locked session update; `/clear` is an honest
 no-op until conversational history exists and preserves session/compliance state.
 Focused M5 tests cover aliases, location behavior, FAQ visibility/overrides, and age state.
+
+### M5.5 - Multi-jurisdiction compliance resolution
+
+Alembic revision `0005_m55_jurisdictional_compliance` adds the explicit business
+compliance domain, optional canonical location region code, and session binding
+snapshot. It deliberately leaves legacy free-text regions unmapped. The immutable
+profile catalog and one resolver support general retail, Oregon cannabis, and
+New Mexico cannabis; unsupported or unconfigured cannabis jurisdictions remain
+unresolved and fail closed for regulated capabilities. Location switching locks
+and rebinds the session, preserving attestation only when the effective
+domain/jurisdiction/profile/version fingerprint is unchanged. M5.5 adds no M6
+product commands or remote profile updater.
 
 ### M6 - Product/catalog command capability
 

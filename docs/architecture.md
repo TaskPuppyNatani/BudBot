@@ -1,7 +1,7 @@
 # BudBot Architecture
 
 Status: V1 project contract  
-Last updated: 2026-09-19
+Last updated: 2026-09-23
 
 ## Purpose
 
@@ -18,7 +18,7 @@ V1 must support:
 - business-wide configuration with location-specific overrides;
 - customer-configurable assistant name and branding;
 - server-enforced age gating;
-- a versioned compliance-profile system, including an Oregon cannabis profile;
+- a versioned compliance-profile system, including Oregon and New Mexico cannabis profiles;
 - a provider-neutral AI layer;
 - self-hosted deployment;
 - cloud deployment;
@@ -137,6 +137,11 @@ A visitor conversation belongs to:
 - conversation state.
 
 Age verification/attestation belongs to the visitor session, not to the business.
+
+For cannabis tenants, the session also binds the effective compliance domain,
+canonical selected-location jurisdiction, profile ID, and profile version.
+Location display text is never used to infer legal jurisdiction. See
+`docs/compliance.md` for M5.5 resolution and fail-closed behavior.
 
 ## Configuration inheritance
 

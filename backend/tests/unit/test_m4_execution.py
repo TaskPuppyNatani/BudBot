@@ -19,6 +19,7 @@ from budbot.core.exceptions import CommandError, ComplianceError, ResourceNotFou
 from budbot.core.tenancy import TenantContext
 from budbot.models.assistant import AssistantConfiguration
 from budbot.models.business import Business
+from budbot.models.location import Location
 from budbot.schemas.session import AgeAttestationRequest, CustomerSessionCreate
 from budbot.services.session_service import SessionService
 
@@ -39,6 +40,9 @@ async def _customer_context(
     business = Business(
         display_name=name,
         industry="general_retail",
+        compliance_domain=(
+            "cannabis" if profile_id == "oregon_cannabis" else "general_retail"
+        ),
         compliance_profile_id=profile_id,
         compliance_profile_version="1.0",
     )
@@ -51,9 +55,26 @@ async def _customer_context(
     )
     db_session.add_all([business, assistant])
     await db_session.flush()
+    selected_location_id = None
+    if profile_id == "oregon_cannabis":
+        location = Location(
+            business_id=business.id,
+            display_name="Portland",
+            address_line_1="1 Main St",
+            city="Portland",
+            region="Oregon",
+            region_code="OR",
+            postal_code="97201",
+            country="US",
+            timezone="America/Los_Angeles",
+            active=True,
+        )
+        db_session.add(location)
+        await db_session.flush()
+        selected_location_id = location.id
     customer_session = await SessionService(
         db_session, TenantContext(business.id)
-    ).create(CustomerSessionCreate())
+    ).create(CustomerSessionCreate(selected_location_id=selected_location_id))
     return (
         CommandExecutionContext(
             session=db_session,
@@ -266,6 +287,7 @@ async def test_tenant_expiry_and_profile_mismatch_are_not_bypassed(db_session) -
     assert tenant_error.value.code == "SESSION_NOT_FOUND"
 
     first_business.compliance_profile_id = "oregon_cannabis"
+    first_business.compliance_domain = "cannabis"
     await db_session.flush()
     with pytest.raises(ComplianceError) as mismatch:
         await executor.execute("/help", first)

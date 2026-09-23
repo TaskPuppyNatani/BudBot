@@ -22,6 +22,8 @@ GENERAL_RETAIL_PROFILE = ComplianceProfile(
     website_attestation_notice=(
         "This general-retail profile does not require a cannabis age attestation."
     ),
+    compliance_domain="general_retail",
+    jurisdiction_code=None,
     capability_rules={
         ComplianceCapability.BUSINESS_HOURS: CapabilityRule(
             CapabilityPolicy.PUBLIC, "PUBLIC_CAPABILITY"
