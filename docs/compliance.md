@@ -233,6 +233,15 @@ cannabis_deals       -> age-gated + advertising policy
 medical_advice       -> prohibited as an assistant-generated capability
 ```
 
+M6 adds generic `catalog_products`, `catalog_search`, and `catalog_deals`
+capabilities so command handlers remain industry-neutral. General-retail profile
+rules allow these catalog reads without cannabis age gating. Oregon and New Mexico
+cannabis profile rules age-gate them. `/categories` uses the product catalog
+capability because category names can disclose regulated menu information. The
+generic capabilities are not in `SAFE_PUBLIC_CAPABILITIES`; no-location and
+unsupported-jurisdiction cannabis requests therefore retain M5.5 fail-closed
+behavior.
+
 The exact policy matrix should be explicit and tested.
 
 ## Promotions and `/deals`

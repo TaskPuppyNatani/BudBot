@@ -48,6 +48,12 @@ class Business(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     policies_info_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true(), nullable=False
     )
+    products_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    promotions_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
     compliance_profile_id: Mapped[str] = mapped_column(
         String(100),
         default="general_retail",

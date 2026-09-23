@@ -36,7 +36,7 @@ V1 does not require production integrations for Dutchie, Treez, Flowhub, orderin
 
 The architecture must leave clean extension points for those capabilities.
 
-Product-related slash commands may operate against a business-managed catalog or development/mock inventory provider until production POS adapters are added.
+Product-related slash commands operate against the tenant-managed local catalog until production POS adapters are added.
 
 ## Repository layout
 
@@ -236,6 +236,11 @@ providers/
 ```
 
 Future POS integrations should be adapters behind the inventory/catalog interfaces rather than special cases inside chat logic.
+
+M6's catalog path is command framework → `ComplianceEngine` → `CatalogService` →
+registered `CatalogProvider` → the tenant-managed `local` catalog. Commands receive
+normalized catalog result values and do not know the selected provider. External POS
+adapters, AI-assisted search, and customer/admin UI are later milestones.
 
 ## Frontend separation
 

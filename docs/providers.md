@@ -84,8 +84,18 @@ V1 must define an inventory/catalog interface even though production cannabis PO
 
 Initial implementations:
 
-- `mock`;
-- business-managed/internal catalog.
+- `local` (the business-managed/internal database catalog).
+
+The M6 `CatalogProvider` contract supports normalized product listing and search,
+category listing, and active deal listing. `CatalogService` validates tenant and
+selected-location scope, applies a bounded result count and deterministic ordering,
+and owns server-side provider resolution. The `local` provider reads configured
+BudBot records and carries source/update metadata in its internal results. Unknown
+provider keys and provider failures become stable customer-safe errors. No external
+provider credentials or arbitrary module imports are accepted as configuration.
+
+The provider seam is intentionally independent of Dutchie, Treez, Flowhub, or other
+POS schemas; later adapters must map their data to the same normalized catalog values.
 
 Future adapters may include:
 

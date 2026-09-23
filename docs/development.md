@@ -255,6 +255,14 @@ Acceptance:
 - no product facts are fabricated;
 - no production POS integration is required yet.
 
+M6 implementation notes: Alembic revision `0006_m6_provider_neutral_catalog` adds
+normalized categories, products, per-location offerings, and configured deals, with
+composite tenant/location constraints. The explicit `local` provider reads these
+records through `CatalogService`; the command executor performs feature and compliance
+checks before handlers run. Generic catalog capabilities are public for general retail
+and age-gated for Oregon/New Mexico cannabis. There is no catalog provider-selection
+UI, POS synchronization, AI search, or checkout behavior in M6.
+
 ### M7 - AI provider layer
 
 Scope:

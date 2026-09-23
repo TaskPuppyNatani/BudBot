@@ -58,6 +58,15 @@ NEW_MEXICO_CANNABIS_PROFILE = ComplianceProfile(
         ComplianceCapability.CANNABIS_DEALS: CapabilityRule(
             CapabilityPolicy.AGE_GATED, "AGE_VERIFICATION_REQUIRED"
         ),
+        ComplianceCapability.CATALOG_PRODUCTS: CapabilityRule(
+            CapabilityPolicy.AGE_GATED, "AGE_VERIFICATION_REQUIRED"
+        ),
+        ComplianceCapability.CATALOG_SEARCH: CapabilityRule(
+            CapabilityPolicy.AGE_GATED, "AGE_VERIFICATION_REQUIRED"
+        ),
+        ComplianceCapability.CATALOG_DEALS: CapabilityRule(
+            CapabilityPolicy.AGE_GATED, "AGE_VERIFICATION_REQUIRED"
+        ),
         ComplianceCapability.MEDICAL_ADVICE: CapabilityRule(
             CapabilityPolicy.PROHIBITED, "CAPABILITY_PROHIBITED"
         ),

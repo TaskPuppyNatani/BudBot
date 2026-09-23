@@ -179,6 +179,17 @@ source_updated_at
 
 Do not invent missing product facts.
 
+M6 stores industry-neutral `catalog_categories`, `catalog_products`,
+`product_offerings`, and `catalog_deals`. Category and product identity are
+business-scoped; offerings bind a product to one same-business location and hold
+that location's offered state, normalized availability (`available`, `unavailable`,
+or `unknown`), optional integer `price_minor` with an ISO currency code, and optional
+source freshness. Deals are factual configured descriptions scoped to the business
+or one same-business location, with optional product/category links and timezone-aware
+start/end timestamps. Database composite foreign keys reinforce tenant/location
+integrity. M6 does not calculate discount eligibility, tax, stacking, or checkout
+prices.
+
 ## Feature flags
 
 Capabilities should be explicit.
@@ -200,6 +211,8 @@ Compliance may disable a capability regardless of a business feature flag.
 
 M5's four customer-information flags default to enabled; disabling a flag hides the
 command from help/autocomplete and rejects execution without confusing it with missing data.
+M6 adds `products_enabled` for `/products`, `/search`, and `/categories`, and
+`promotions_enabled` for `/deals`; both default to enabled.
 
 ## AI configuration
 

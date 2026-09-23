@@ -34,7 +34,7 @@ async def _session(client: AsyncClient, business_id: str) -> dict[str, object]:
     return response.json()
 
 
-async def test_customer_help_and_autocomplete_expose_only_real_commands(
+async def test_customer_help_and_autocomplete_expose_real_catalog_commands(
     m2_client: AsyncClient,
 ) -> None:
     business = await _business(m2_client, "Cedar")
@@ -52,10 +52,13 @@ async def test_customer_help_and_autocomplete_expose_only_real_commands(
     assert body["canonical_name"] == "help"
     assert body["output"].startswith("Cedar Guide commands:")
     assert [command["name"] for command in body["commands"]] == [
-        "about", "age", "clear", "contact", "directions", "faq", "help",
-        "hours", "location", "locations", "payments", "policies",
+        "about", "age", "categories", "clear", "contact", "deals", "directions",
+        "faq", "help", "hours", "location", "locations", "payments", "policies",
+        "products", "search",
     ]
-    assert "/products" not in body["output"]
+    assert "/products" in body["output"]
+    assert "/categories" in body["output"]
+    assert "/deals" in body["output"]
     faq_response = await m2_client.post(
         "/api/v1/commands/execute",
         headers=_tenant_header(business_id),
@@ -73,12 +76,12 @@ async def test_customer_help_and_autocomplete_expose_only_real_commands(
     assert metadata.status_code == 200
     entries = metadata.json()
     assert [entry["name"] for entry in entries] == [command["name"] for command in body["commands"]]
-    assert entries[4]["aliases"] == ["map", "address"]
-    assert entries[7]["aliases"] == ["open", "closing"]
+    assert entries[6]["aliases"] == ["map", "address"]
+    assert entries[9]["aliases"] == ["open", "closing"]
     assert all(entry["available"] for entry in entries)
 
 
-async def test_command_api_normalizes_invalid_unknown_and_cross_tenant_errors(
+async def test_command_api_normalizes_invalid_catalog_and_cross_tenant_errors(
     m2_client: AsyncClient,
 ) -> None:
     first = await _business(m2_client, "First")
@@ -99,10 +102,18 @@ async def test_command_api_normalizes_invalid_unknown_and_cross_tenant_errors(
     unknown = await m2_client.post(
         "/api/v1/commands/execute",
         headers=_tenant_header(first_id),
-        json={"session_id": session_id, "input": "/products"},
+        json={"session_id": session_id, "input": "/not-a-command"},
     )
     assert unknown.status_code == 404
     assert unknown.json()["code"] == "COMMAND_NOT_FOUND"
+
+    no_location = await m2_client.post(
+        "/api/v1/commands/execute",
+        headers=_tenant_header(first_id),
+        json={"session_id": session_id, "input": "/products"},
+    )
+    assert no_location.status_code == 409
+    assert no_location.json()["code"] == "CATALOG_LOCATION_REQUIRED"
 
     cross_tenant = await m2_client.post(
         "/api/v1/commands/execute",

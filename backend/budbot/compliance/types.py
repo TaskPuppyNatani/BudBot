@@ -39,6 +39,9 @@ class ComplianceCapability(StrEnum):
     CANNABIS_PRODUCT_SEARCH = "cannabis_search"
     CANNABIS_DEALS = "cannabis_deals"
     CANNABIS_PROMOTIONS = "cannabis_deals"
+    CATALOG_PRODUCTS = "catalog_products"
+    CATALOG_SEARCH = "catalog_search"
+    CATALOG_DEALS = "catalog_deals"
     MEDICAL_ADVICE = "medical_advice"
     PERSONALIZED_CANNABIS_MEDICAL_ADVICE = "medical_advice"
 

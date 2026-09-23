@@ -1,4 +1,4 @@
-"""Explicit M5 customer-command registrations."""
+"""Explicit customer-command registrations."""
 
 from budbot.commands.executor import CommandExecutor
 from budbot.commands.registry import CommandRegistry
@@ -10,6 +10,7 @@ from budbot.commands.types import (
 )
 from budbot.compliance.registry import ComplianceCapability
 from budbot.commands.customer.about import create_about_handler
+from budbot.commands.customer.catalog import categories, deals, products, search
 from budbot.commands.customer.age import age
 from budbot.commands.customer.clear import clear
 from budbot.commands.customer.contact import contact
@@ -81,6 +82,40 @@ def register_customer_commands(
             arguments=CommandArguments(
                 help_hint="/faq <search terms>", minimum=0, maximum=None
             ),
+        ),
+        _customer(
+            "products",
+            "Browse products listed for the selected location.",
+            products,
+            feature="products_enabled",
+            compliance=ComplianceCapability.CATALOG_PRODUCTS,
+            arguments=CommandArguments(
+                help_hint="/products [category]", minimum=0, maximum=None
+            ),
+        ),
+        _customer(
+            "search",
+            "Search factual catalog data at the selected location.",
+            search,
+            feature="products_enabled",
+            compliance=ComplianceCapability.CATALOG_SEARCH,
+            arguments=CommandArguments(
+                help_hint="/search <query>", minimum=0, maximum=None
+            ),
+        ),
+        _customer(
+            "categories",
+            "List categories represented in the selected location's catalog.",
+            categories,
+            feature="products_enabled",
+            compliance=ComplianceCapability.CATALOG_PRODUCTS,
+        ),
+        _customer(
+            "deals",
+            "List active configured deals for the selected location.",
+            deals,
+            feature="promotions_enabled",
+            compliance=ComplianceCapability.CATALOG_DEALS,
         ),
         _customer(
             "payments", "Show configured payment methods.", payments,

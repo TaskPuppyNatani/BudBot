@@ -115,6 +115,18 @@ Show business-provided promotions/deals that are enabled and permitted by the ac
 
 BudBot must not invent a promotion.
 
+M6 implements all four catalog commands through the provider-neutral catalog service.
+They require an active selected location. `/products [category]` lists enabled products
+explicitly offered there; `/search <query>` performs bounded, deterministic
+case-insensitive matching across factual product, brand, category, and description
+fields; `/categories` lists enabled categories represented by visible local offerings;
+and `/deals` lists enabled business-wide or selected-location deals whose UTC start/end
+window is active. Catalog outputs are capped at 25 entries and disclose when more
+matches exist. Missing price is shown as not listed; availability `unknown` is shown
+as not reported. These commands do not infer inventory, prices, discounts, or deal
+terms. Cannabis catalog access, including categories, is protected by the resolved
+location compliance profile and age gate.
+
 ### `/payments`
 
 Show configured payment methods.
@@ -354,10 +366,10 @@ validation, but are not persisted or executed.
 ### Customer
 
 - [x] `/help`
-- [ ] `/products`
-- [ ] `/search`
-- [ ] `/categories`
-- [ ] `/deals`
+- [x] `/products`
+- [x] `/search`
+- [x] `/categories`
+- [x] `/deals`
 - [x] `/hours`
 - [x] `/locations`
 - [x] `/location`

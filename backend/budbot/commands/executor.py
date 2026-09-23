@@ -135,7 +135,7 @@ class CommandExecutor:
             )
             feature_names = (
                 "directions_enabled", "faq_enabled", "payments_info_enabled",
-                "policies_info_enabled",
+                "policies_info_enabled", "products_enabled", "promotions_enabled",
             )
             features = frozenset(name for name in feature_names if getattr(business, name))
         return replace(

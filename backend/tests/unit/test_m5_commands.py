@@ -201,7 +201,8 @@ async def test_customer_information_commands_are_deterministic_and_tenant_scoped
     about = await executor.execute("/about", context)
     assert "Cedar Guide" in about.output
     assert "BudBot" not in about.output
-    assert "/products" not in about.output
+    for command in ("/products", "/search", "/categories", "/deals"):
+        assert command in about.output
     clear = await executor.execute("/clear", context)
     assert "nothing to clear" in clear.output
     customer_session = await SessionService(context.session, context.tenant).get(

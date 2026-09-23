@@ -48,6 +48,15 @@ GENERAL_RETAIL_PROFILE = ComplianceProfile(
         ComplianceCapability.CANNABIS_DEALS: CapabilityRule(
             CapabilityPolicy.PROHIBITED, "CAPABILITY_PROHIBITED"
         ),
+        ComplianceCapability.CATALOG_PRODUCTS: CapabilityRule(
+            CapabilityPolicy.PUBLIC, "PUBLIC_CAPABILITY"
+        ),
+        ComplianceCapability.CATALOG_SEARCH: CapabilityRule(
+            CapabilityPolicy.PUBLIC, "PUBLIC_CAPABILITY"
+        ),
+        ComplianceCapability.CATALOG_DEALS: CapabilityRule(
+            CapabilityPolicy.PUBLIC, "PUBLIC_CAPABILITY"
+        ),
         ComplianceCapability.MEDICAL_ADVICE: CapabilityRule(
             CapabilityPolicy.PROHIBITED, "CAPABILITY_PROHIBITED"
         ),

@@ -78,10 +78,10 @@ def test_region_codes_normalize_but_do_not_guess_from_display_region() -> None:
         )
 
 
-def test_alembic_has_exactly_one_m55_head() -> None:
+def test_alembic_has_exactly_one_head_after_m6() -> None:
     backend_dir = Path(__file__).resolve().parents[2]
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     assert ScriptDirectory.from_config(config).get_heads() == [
-        "0005_m55_jurisdictional_compliance"
+        "0006_m6_provider_neutral_catalog"
     ]

@@ -192,8 +192,10 @@ async def test_help_and_introspection_filter_features_and_use_assistant_name(
     assert [(item.name, item.available) for item in detailed] == [
         ("about", True),
         ("age", True),
+        ("categories", False),
         ("clear", True),
         ("contact", True),
+        ("deals", False),
         ("directions", False),
         ("faq", False),
         ("feature-test", False),
@@ -203,6 +205,8 @@ async def test_help_and_introspection_filter_features_and_use_assistant_name(
         ("locations", True),
         ("payments", False),
         ("policies", False),
+        ("products", False),
+        ("search", False),
     ]
     with pytest.raises(CommandError) as unavailable_error:
         await executor.execute("/feature-test", unavailable)
