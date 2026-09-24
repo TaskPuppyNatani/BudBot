@@ -110,17 +110,39 @@ Credentials must not be committed to Git.
 
 ## Local AI example
 
-Document at least one generic OpenAI-compatible configuration path.
-
-Example conceptual values:
+The backend can use a local OpenAI-compatible inference server without a cloud AI
+account. Start the inference server separately and configure its reachable base URL,
+model identifier, and verified harness/capabilities in the operator's private `.env`:
 
 ```text
-provider = openai_compatible
-base_url = http://host.docker.internal:1234/v1
-model = configured-local-model
+BUDBOT_AI_ENABLED=true
+BUDBOT_AI_PROVIDER=openai_compatible
+BUDBOT_AI_BASE_URL=http://127.0.0.1:1234/v1
+BUDBOT_AI_MODEL=operator-selected-model
+BUDBOT_AI_HARNESS=generic_openai
+BUDBOT_AI_CAPABILITY_TOOL_CALLING=true
 ```
 
-Linux/container networking differences must be documented rather than assuming `localhost` always reaches the host.
+Use `qwen_openai` only for a compatible endpoint serving the Qwen-style behavior.
+Only set tool calling or other capability flags after validating the chosen model
+and serving stack. AI remains disabled unless explicitly enabled. Example model names
+are placeholders; BudBot does not download or manage models or start LM Studio.
+
+For a backend running in a container, `127.0.0.1` points inside that container.
+Use the host gateway/address reachable from that container (for example
+`host.docker.internal` where supported), or place the model server and backend on a
+trusted private network. Do not expose unauthenticated inference endpoints to the
+public internet. Local inference can run without internet access once the model and
+runtime are installed; cloud adapters require their configured network service.
+
+The base URL is operator-trusted configuration. Public chat clients cannot choose
+URLs, provider classes, harnesses, models, or credentials. No generic URL-fetching
+feature exists. If future admin UI allows endpoint changes, add SSRF protections
+before exposing that control.
+
+The deterministic suite mocks provider HTTP calls. Live LM Studio/local-model smoke
+tests are optional and were not a normal-suite dependency; live cloud calls also
+require operator credentials and may incur cost.
 
 ## Cloud deployment
 

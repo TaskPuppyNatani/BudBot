@@ -244,6 +244,27 @@ behavior.
 
 The exact policy matrix should be explicit and tested.
 
+M7 AI tools are not a separate compliance path. The tool bridge statically maps
+normalized model calls to existing customer commands, and the command executor
+repeats tenant, feature, selected-location, and capability checks at execution
+time. Product/category/deal calls therefore continue through the M6 catalog
+services and the active server-side compliance profile. Tool schemas are only
+advertisements and do not authorize execution. An unselected or unsupported
+cannabis location fails closed, and a stale session binding is rejected before
+provider use.
+
+The AI service may refuse detected medical-advice requests before advertising or
+executing catalog tools; `medical_advice` remains prohibited by the compliance
+engine. That lightweight intent check is an early refusal aid, not the safety
+boundary for generated recommendations: public chat returns deterministic command
+output after tool execution and never returns the model's free-form synthesis.
+Thus a missed intent phrase cannot turn catalog facts into a generated treatment
+recommendation. Prompts are additional guidance only and never replace
+server-side policy. FAQ/catalog/tool text and user messages remain data in their
+respective message roles, not trusted system instructions. If AI is disabled or
+unavailable, existing slash commands and deterministic compliance behavior remain
+available.
+
 ## Promotions and `/deals`
 
 BudBot may display business-supplied promotions only when:

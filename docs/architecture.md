@@ -189,39 +189,52 @@ No slash command, AI provider, or direct API route may bypass mandatory complian
 
 ## AI architecture
 
-The AI layer must be provider-neutral.
+M7 keeps three concerns separate:
 
-At minimum, V1 should define a provider protocol similar to:
-
-```python
-class ChatProvider(Protocol):
-    async def generate(self, request: ChatRequest) -> ChatResponse:
-        ...
+```text
+AIService orchestration
+    ↓
+provider transport (HTTP protocol, endpoint, authentication)
+    ↓
+model/serving harness (message, tool, reasoning, and response behavior)
+    ↓
+configured model
 ```
 
-V1 provider targets:
+Core values in `providers/ai/base.py` normalize messages, tool definitions/calls,
+generation options, capabilities, finish reasons, usage, and response identity.
+Transport and harness registries contain only explicit, trusted implementations;
+configuration cannot name Python modules or classes. Local OpenAI-compatible
+endpoints may select either the generic OpenAI-style harness or the Qwen harness.
+Native OpenAI and Anthropic transports use their paired harnesses.
 
-- mock provider for deterministic tests;
-- OpenAI-compatible provider for LM Studio, llama.cpp servers, vLLM, and compatible endpoints;
-- OpenAI provider;
-- Anthropic provider.
-
-Provider-specific objects must not leak into core chat-domain models.
+The configured provider/model/harness capability tuple is operator-declared. BudBot
+does not assume that a model supports tools, usage, or generation controls just
+because its provider or model name suggests it. Unsupported required capabilities
+fail safely.
 
 ## Tool-first behavior
 
-Authoritative business facts should come from structured data or tools rather than model memory.
+The single `AIService` may interpret a request and select tools backed by existing
+deterministic commands and services. The bounded tool loop is capped at three
+rounds and validates every call against a server-owned schema and static mapping.
+Tool results remain tool-role data; neither user nor FAQ/catalog text is
+concatenated into system instructions. Customer-visible tool-backed output is
+composed from the deterministic command results. The provider's free-form final
+prose is not returned, so an irrelevant or empty result cannot authorize a model
+to invent a business fact. With no tool result, the service returns a fixed safe
+response.
 
 Examples:
 
-- hours -> location/business data;
-- address -> location data;
-- directions -> maps provider/link builder;
-- FAQ -> stored knowledge;
-- products -> configured catalog/inventory provider;
-- compliance -> compliance engine.
+- hours/contact/locations -> existing M5 customer-information commands;
+- FAQs -> tenant-scoped public knowledge;
+- products/categories/deals -> the M6 catalog service and compliance policy;
+- compliance -> the authoritative `ComplianceEngine`.
 
-The model may interpret intent and phrase answers, but it should not invent store facts.
+AI is additive. Slash commands and readiness checks do not depend on an AI provider.
+The M7 `POST /api/v1/chat` endpoint uses the existing temporary tenant/session
+conventions; authentication and the customer widget remain later work.
 
 ## Provider boundaries
 
@@ -229,18 +242,22 @@ Keep providers separated by capability:
 
 ```text
 providers/
-├── ai/
-├── inventory/
+├── ai/          # normalized AI transports and model/serving harnesses
+├── inventory/   # normalized catalog providers
 ├── maps/
 └── secrets/
 ```
 
-Future POS integrations should be adapters behind the inventory/catalog interfaces rather than special cases inside chat logic.
+M7 implements mock, generic OpenAI-compatible HTTP, hosted OpenAI, and native
+Anthropic transports. Gemini, xAI/Grok, OpenRouter-specific, and other native
+protocols are not registered as implemented; a compatible endpoint can use the
+generic transport only when it honors the configured wire contract. No live
+provider credentials are persisted in tenant rows.
 
-M6's catalog path is command framework → `ComplianceEngine` → `CatalogService` →
-registered `CatalogProvider` → the tenant-managed `local` catalog. Commands receive
-normalized catalog result values and do not know the selected provider. External POS
-adapters, AI-assisted search, and customer/admin UI are later milestones.
+Future POS integrations should be adapters behind the inventory/catalog interfaces
+rather than special cases inside chat logic. M6's catalog path is command framework
+→ `ComplianceEngine` → `CatalogService` → registered `CatalogProvider` → the
+tenant-managed `local` catalog. AI tools reuse that path rather than accessing SQL.
 
 ## Frontend separation
 

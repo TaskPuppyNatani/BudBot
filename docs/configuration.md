@@ -216,23 +216,37 @@ M6 adds `products_enabled` for `/products`, `/search`, and `/categories`, and
 
 ## AI configuration
 
-AI/provider selection should be business scoped for V1.
-
-Conceptually:
+M7 AI selection is server/runtime configuration only, loaded through the typed
+`BUDBOT_AI_*` settings. AI is disabled by default. The main settings are:
 
 ```text
-provider_type
-base_url             when applicable
-model
-timeout
-max_output_tokens
-provider_options
-secret_reference
+BUDBOT_AI_ENABLED
+BUDBOT_AI_PROVIDER                 openai_compatible | openai | anthropic
+BUDBOT_AI_BASE_URL                 required for openai_compatible; operator-trusted
+BUDBOT_AI_MODEL                    required, trimmed, 1–200 characters
+BUDBOT_AI_HARNESS                  explicit registered adapter key
+BUDBOT_AI_API_KEY                  optional for compatible; required for hosted providers
+BUDBOT_AI_TIMEOUT_SECONDS
+BUDBOT_AI_CONNECT_TIMEOUT_SECONDS
+BUDBOT_AI_MAX_OUTPUT_TOKENS
+BUDBOT_AI_TEMPERATURE
+BUDBOT_AI_CAPABILITY_*             explicit booleans for the configured tuple
 ```
 
-Do not store plaintext API secrets in ordinary configuration rows.
+See `.env.example` for safe placeholder values. The implemented provider/harness
+pairs and defaults are documented in `docs/providers.md`. No model is hard-coded;
+the model identifier must be selected by the operator. Provider capability flags
+are assertions about the configured model/harness, not capabilities inferred from
+provider names. A workflow that requires an unavailable capability fails honestly.
+The deterministic `mock` provider is test-injected and is not a runtime setting.
 
-Location-specific AI providers are not required for V1.
+Provider endpoints and credentials are trusted server settings. Customer chat
+payloads cannot override provider, model, harness, base URL, or API key. Never put
+credentials in ordinary business rows, prompts, logs, or committed example files.
+M7 has no per-business or per-location AI overrides and adds no encrypted secret
+storage. A future authenticated admin path must validate endpoint destinations
+against SSRF risks before exposing operator-configurable URLs. M9 owns admin
+configuration; resolution currently uses server-level defaults only.
 
 ## Compliance configuration
 

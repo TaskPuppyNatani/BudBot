@@ -23,60 +23,96 @@ Provider-specific SDK objects must not become core domain types.
 
 ## AI providers
 
-### Required V1 provider types
+### M7 implemented transports
 
-- `mock`
-- `openai_compatible`
-- `openai`
-- `anthropic`
+| Registry key | Transport | Default endpoint | Harness |
+| --- | --- | --- | --- |
+| `openai_compatible` | Async OpenAI Chat Completions-compatible HTTP; local or operator-selected compatible endpoint | Required `BUDBOT_AI_BASE_URL` | `generic_openai` or `qwen_openai` |
+| `openai` | Hosted OpenAI using the shared compatible transport | `https://api.openai.com/v1` | `openai_chat` |
+| `anthropic` | Native Anthropic Messages HTTP protocol | `https://api.anthropic.com/v1` | `anthropic_native` |
 
-The OpenAI-compatible provider is important for local/self-hosted inference such as:
+The deterministic `mock` provider is injected into registries by tests and is not
+registered in the default runtime registry. The generic transport supports
+self-hosted services such as LM Studio, vLLM,
+llama.cpp servers, and other endpoints that implement the expected compatible
+request/response shape. Tool support is not assumed: the configured capability
+flags represent the operator's verified behavior for that model and harness.
 
-- LM Studio;
-- llama.cpp server;
-- vLLM;
-- other compatible endpoints.
+Gemini, xAI/Grok, and provider-specific OpenRouter transports are not implemented
+or advertised. An endpoint from one of those services may be configured under
+`openai_compatible` only if it actually implements this wire protocol. Adding a
+native transport requires a functioning adapter, harness compatibility rules, and
+contract tests.
 
-### Conceptual protocol
+### Normalized transport and harness contracts
 
-```python
-class ChatProvider(Protocol):
-    async def generate(self, request: ChatRequest) -> ChatResponse:
-        ...
-```
+`ProviderTransport.generate(request, config, harness)` owns endpoint delivery,
+authentication, async HTTP, timeout, and provider error handling. `ModelHarness`
+encodes normalized messages/tools and validates/decodes the provider response.
+`AIService` sees only normalized BudBot values and does not contain vendor response
+parsing or model-family branches.
 
-Internal request/response objects should normalize:
+The core values include system/user/assistant/tool messages, declarative JSON-schema
+tool definitions, structured tool calls, finish reasons, generation controls,
+explicit capabilities, and optional usage metadata. Vendor SDK objects and raw
+response envelopes do not leave adapters.
 
-- messages;
-- tool definitions;
-- tool calls/results;
-- finish reason;
-- usage where available;
-- raw-provider metadata where safe/needed.
+The harness registry is explicit and maps `generic_openai`, `qwen_openai`,
+`openai_chat`, and `anthropic_native`. Qwen adaptation strips `<think>` blocks and
+discards hidden reasoning fields. Provider/harness pairs are checked in a static
+compatibility map; arbitrary imports, class paths, or customer-supplied templates
+are not supported.
+
+### Trusted configuration and security boundary
+
+Provider, endpoint, model, harness, credentials, timeout, output limit, and
+capabilities come from server-side environment/configuration. AI is disabled by
+default. Public chat requests cannot select any of those values. A configured base
+URL is trusted operator input; BudBot does not fetch customer-supplied URLs. Protect
+operator configuration and deployments against SSRF if endpoint configuration is
+ever exposed through a future admin surface.
+
+API keys use `SecretStr` while loading settings and are kept out of prompts,
+responses, and normalized exceptions. M7 does not store tenant-specific credentials
+in database columns. M9 owns any authenticated admin configuration; durable secret
+references/encryption are deferred.
+
+### Tool and failure behavior
+
+The provider transports tool declarations and normalized tool requests only.
+Execution is owned by BudBot's static `AIToolRegistry`, which validates arguments
+and calls existing customer commands so feature gates, tenant checks, selected
+location, and `ComplianceEngine` checks run again. The public chat loop is limited
+to three rounds and eight calls per round. Unknown/malformed/unadvertised calls fail
+closed. Customer-visible tool-backed answers are composed from the deterministic
+command outputs, and provider-generated final prose is discarded. Irrelevant tool
+results therefore cannot establish additional facts, and empty catalog results
+retain their honest command output. If no tool executes, the customer receives a
+fixed safe response instead of guessed business facts.
+
+HTTP response bodies are size bounded. Provider errors normalize to stable codes
+such as `AI_PROVIDER_TIMEOUT`, `AI_PROVIDER_AUTH_FAILED`,
+`AI_PROVIDER_BAD_RESPONSE`, `AI_MODEL_UNAVAILABLE`, and
+`AI_CAPABILITY_UNSUPPORTED`; upstream bodies, secrets, and stack traces are not
+returned to customers. Readiness and deterministic slash commands do not depend on
+provider availability.
 
 ### Provider configuration
 
-Provider choice should be configuration-driven.
+See `docs/configuration.md` and `.env.example` for the server environment names.
+Local example:
 
-Examples:
-
-```yaml
-ai:
-  provider: openai_compatible
-  base_url: http://127.0.0.1:1234/v1
-  model: local-model
+```text
+BUDBOT_AI_ENABLED=true
+BUDBOT_AI_PROVIDER=openai_compatible
+BUDBOT_AI_BASE_URL=http://127.0.0.1:1234/v1
+BUDBOT_AI_MODEL=operator-selected-model
+BUDBOT_AI_HARNESS=generic_openai
+BUDBOT_AI_CAPABILITY_TOOL_CALLING=true
 ```
 
-or:
-
-```yaml
-ai:
-  provider: openai
-  model: configured-model
-  secret_reference: secret://...
-```
-
-Do not bake provider names into chat business logic.
+Only enable a capability after verifying it for the selected model and serving
+stack. Do not bake provider names or model names into chat business logic.
 
 ## Inventory/catalog providers
 

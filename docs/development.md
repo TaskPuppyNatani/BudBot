@@ -263,24 +263,23 @@ checks before handlers run. Generic catalog capabilities are public for general 
 and age-gated for Oregon/New Mexico cannabis. There is no catalog provider-selection
 UI, POS synchronization, AI search, or checkout behavior in M6.
 
-### M7 - AI provider layer
+### M7 - Provider-neutral AI compatibility layer
 
-Scope:
+Implemented scope:
 
-- normalized chat request/response contracts;
-- mock provider;
-- OpenAI-compatible provider;
-- at least one cloud provider adapter;
-- provider registry;
-- timeout/error normalization;
-- secret references.
+- immutable provider-neutral messages, requests, responses, tool calls, usage, and capabilities;
+- explicit async transport registry for mock, OpenAI-compatible, hosted OpenAI, and native Anthropic;
+- explicit harness registry for generic OpenAI-style, Qwen-style, hosted OpenAI, and Anthropic-native behavior;
+- server-side operator configuration, disabled by default, with no customer-selected endpoint or adapter;
+- AIService with a static validated tool bridge into existing customer commands;
+- model-selected tools with deterministic customer-visible command output, compliance/tenant reauthorization, safe normalized errors, and a bounded three-round loop;
+- minimal `POST /api/v1/chat` seam, with no widget or persisted conversation history;
+- deterministic mock HTTP/provider tests; no paid provider calls required.
 
-Acceptance:
-
-- tests use deterministic mock provider;
-- local OpenAI-compatible endpoint can be configured;
-- cloud provider can be configured;
-- changing provider does not require chat business-logic changes.
+The provider adapter tests use `httpx.MockTransport`; live local/cloud acceptance is
+optional and must be reported separately. No schema migration is required. Slash
+commands, health, and readiness remain independent of AI. Gemini, xAI/Grok, and
+native OpenRouter adapters are future provider work, not implemented M7 transports.
 
 ### M8 - Public widget
 
