@@ -55,7 +55,7 @@ class SessionService:
         self.locations = TenantScopedRepository(session, Location, tenant)
 
     async def create(self, payload: CustomerSessionCreate) -> CustomerSession:
-        business = await BusinessService(self.session).get(
+        business = await BusinessService(self.session).get_for_customer(
             self.tenant, self.tenant.business_id, for_update=True
         )
         location = await self._validate_location(payload.selected_location_id)
@@ -77,12 +77,17 @@ class SessionService:
         self, session_id: UUID, *, validate_binding: bool = True
     ) -> CustomerSession:
         customer_session = await self._get(session_id)
+        business = await BusinessService(self.session).get_for_customer(
+            self.tenant, self.tenant.business_id
+        )
         await self._expire_if_needed(customer_session)
         if (
             validate_binding
             and customer_session.age_gate_status != AgeGateStatus.EXPIRED
         ):
-            await self._current_resolution(customer_session, require_match=True)
+            await self._current_resolution(
+                customer_session, require_match=True, business=business
+            )
         return customer_session
 
     async def set_location(
@@ -93,7 +98,7 @@ class SessionService:
         customer_session = await self._get_live(
             session_id, for_update=True, validate_binding=False
         )
-        business = await BusinessService(self.session).get(
+        business = await BusinessService(self.session).get_for_customer(
             self.tenant, self.tenant.business_id, for_update=True
         )
         location = await self._validate_location(payload.selected_location_id)
@@ -185,6 +190,9 @@ class SessionService:
         validate_binding: bool = True,
     ) -> CustomerSession:
         customer_session = await self._get(session_id, for_update=for_update)
+        business = await BusinessService(self.session).get_for_customer(
+            self.tenant, self.tenant.business_id
+        )
         await self._expire_if_needed(customer_session)
         if customer_session.age_gate_status == AgeGateStatus.EXPIRED:
             raise ComplianceError(
@@ -193,7 +201,9 @@ class SessionService:
                 status_code=410,
             )
         if validate_binding:
-            await self._current_resolution(customer_session, require_match=True)
+            await self._current_resolution(
+                customer_session, require_match=True, business=business
+            )
         return customer_session
 
     async def _expire_if_needed(self, customer_session: CustomerSession) -> None:
@@ -226,12 +236,14 @@ class SessionService:
         require_match: bool,
         lock_business: bool = False,
         lock_location: bool = False,
+        business: Business | None = None,
     ) -> EffectiveComplianceResolution:
-        business = await BusinessService(self.session).get(
-            self.tenant,
-            self.tenant.business_id,
-            for_update=lock_business,
-        )
+        if business is None:
+            business = await BusinessService(self.session).get_for_customer(
+                self.tenant,
+                self.tenant.business_id,
+                for_update=lock_business,
+            )
         resolution = await self.resolver.resolve_session(
             self.session,
             business,

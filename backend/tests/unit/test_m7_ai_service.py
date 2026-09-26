@@ -1,5 +1,6 @@
 """AI tool validation, orchestration, trust, tenancy, and compliance tests."""
 
+import json
 from datetime import UTC, datetime, time
 
 import pytest
@@ -20,6 +21,7 @@ from budbot.providers.ai.base import (
     AIMessageRole,
     AIResponse,
     AIToolCall,
+    MAX_AI_MESSAGE_CONTENT_CHARS,
 )
 from budbot.providers.ai.errors import AIError
 from budbot.providers.ai.harness_registry import build_ai_harness_registry
@@ -27,6 +29,7 @@ from budbot.providers.ai.mock import MockAIProvider
 from budbot.providers.ai.registry import AIProviderRegistry
 from budbot.schemas.session import AgeAttestationRequest, CustomerSessionCreate
 from budbot.services.catalog_repository import CatalogRepository
+from budbot.services.ai_tool_registry import AIToolExecutionResult
 from budbot.services.chat_service import (
     MEDICAL_REFUSAL,
     SAFE_NO_TOOL_REPLY,
@@ -137,6 +140,26 @@ def _service(db_session, tenant, settings, provider):
         registry,
         build_ai_harness_registry(),
     )
+
+
+def test_escape_heavy_tool_result_serializes_as_bounded_valid_json() -> None:
+    output = '\\"' * 10_000
+    result = AIToolExecutionResult(command="faq", output=output)
+
+    content = result.to_model_content()
+    decoded = json.loads(content)
+    message = AIMessage(
+        AIMessageRole.TOOL,
+        content,
+        name="search_faq",
+        tool_call_id="call_1",
+    )
+
+    assert len(content) <= MAX_AI_MESSAGE_CONTENT_CHARS
+    assert decoded["command"] == "faq"
+    assert decoded["result"].startswith(output[:100])
+    assert "[Tool result truncated to fit the model message limit.]" in decoded["result"]
+    assert message.content == content
 
 
 async def test_tool_round_returns_deterministic_search_output_not_model_synthesis(db_session) -> None:

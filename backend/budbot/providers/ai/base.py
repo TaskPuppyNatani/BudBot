@@ -20,6 +20,7 @@ JSONValue: TypeAlias = (
 )
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _TOOL_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+MAX_AI_MESSAGE_CONTENT_CHARS = 40_000
 
 
 def _freeze_json(value: object) -> JSONValue:
@@ -94,7 +95,10 @@ class AIMessage:
         except (TypeError, ValueError) as exc:
             raise ValueError("message role is unsupported") from exc
         object.__setattr__(self, "role", role)
-        if not isinstance(self.content, str) or len(self.content) > 40_000:
+        if (
+            not isinstance(self.content, str)
+            or len(self.content) > MAX_AI_MESSAGE_CONTENT_CHARS
+        ):
             raise ValueError("message content is invalid or too large")
         object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
         if role is AIMessageRole.TOOL:
@@ -214,7 +218,8 @@ class AIResponse:
             raise ValueError("finish reason is invalid") from exc
         object.__setattr__(self, "tool_calls", tuple(self.tool_calls))
         if self.content is not None and (
-            not isinstance(self.content, str) or len(self.content) > 40_000
+            not isinstance(self.content, str)
+            or len(self.content) > MAX_AI_MESSAGE_CONTENT_CHARS
         ):
             raise ValueError("AI response text is invalid or too large")
         if self.finish_reason is AIFinishReason.TOOL_CALLS and not self.tool_calls:

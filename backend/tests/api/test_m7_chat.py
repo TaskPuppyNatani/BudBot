@@ -1,5 +1,6 @@
 """Public M7 chat API trust-boundary and lifecycle tests."""
 
+import json
 from datetime import UTC, datetime, time, timedelta
 from uuid import uuid4
 
@@ -11,8 +12,14 @@ from budbot.core.config import Settings
 from budbot.core.tenancy import TenantContext
 from budbot.models.assistant import AssistantConfiguration
 from budbot.models.business import Business
+from budbot.models.knowledge import FAQEntry
 from budbot.models.location import Location, LocationHours
-from budbot.providers.ai.base import AIFinishReason, AIResponse, AIToolCall
+from budbot.providers.ai.base import (
+    MAX_AI_MESSAGE_CONTENT_CHARS,
+    AIFinishReason,
+    AIResponse,
+    AIToolCall,
+)
 from budbot.providers.ai.harness_registry import build_ai_harness_registry
 from budbot.providers.ai.mock import MockAIProvider
 from budbot.providers.ai.registry import AIProviderRegistry
@@ -131,6 +138,48 @@ async def test_chat_endpoint_returns_only_normalized_content_and_tool_result_sta
     assert provider.requests[0].messages[0].role.value == "system"
     assert provider.requests[0].messages[-1].role.value == "user"
     assert secret not in " ".join(message.content for request in provider.requests for message in request.messages)
+
+
+async def test_escape_heavy_faq_result_stays_bounded_and_does_not_return_500(
+    m2_client: AsyncClient,
+    application: FastAPI,
+    db_session,
+) -> None:
+    tenant, _business, _location, customer_session = await _seed(db_session)
+    escape_heavy = '\\"' * 10_000
+    db_session.add(
+        FAQEntry(
+            business_id=tenant.business_id,
+            question="Escape values",
+            answer=escape_heavy,
+            is_public=True,
+            enabled=True,
+        )
+    )
+    await db_session.flush()
+    provider = _install_mock_runtime(
+        application,
+        _response(call=AIToolCall("call_faq", "search_faq", {"query": "escape"})),
+        _response(content="The matching FAQ is available."),
+    )
+
+    response = await m2_client.post(
+        "/api/v1/chat",
+        headers={"X-BudBot-Business-ID": str(tenant.business_id)},
+        json={"session_id": str(customer_session.id), "message": "Find escape values."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"].startswith("Q: Escape values\nA:")
+    tool_message = next(
+        message
+        for message in provider.requests[1].messages
+        if message.role.value == "tool"
+    )
+    assert len(tool_message.content) <= MAX_AI_MESSAGE_CONTENT_CHARS
+    decoded = json.loads(tool_message.content)
+    assert decoded["command"] == "faq"
+    assert "[Tool result truncated to fit the model message limit.]" in decoded["result"]
 
 
 async def test_public_chat_cannot_override_provider_model_harness_url_or_credentials(

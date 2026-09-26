@@ -45,6 +45,22 @@ class BusinessService:
             raise ResourceNotFound("business")
         return business
 
+    async def get_for_customer(
+        self,
+        tenant: TenantContext,
+        business_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> Business:
+        """Resolve a tenant business only when customer service is available."""
+
+        business = await self.get(tenant, business_id, for_update=for_update)
+        if not for_update:
+            await self.session.refresh(business, attribute_names=["active"])
+        if not business.active:
+            raise ResourceNotFound("business")
+        return business
+
     async def update(
         self,
         tenant: TenantContext,

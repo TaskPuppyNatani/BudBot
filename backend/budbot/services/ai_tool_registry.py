@@ -15,11 +15,16 @@ from budbot.commands.executor import CommandExecutor
 from budbot.commands.types import CommandExecutionContext, CommandScope
 from budbot.core.exceptions import CommandError
 from budbot.core.tenancy import TenantContext
-from budbot.providers.ai.base import AIToolCall, AIToolDefinition
+from budbot.providers.ai.base import (
+    MAX_AI_MESSAGE_CONTENT_CHARS,
+    AIToolCall,
+    AIToolDefinition,
+)
 from budbot.providers.ai.errors import AIError
 
 
 MAX_TOOL_RESULT_CHARS = 20_000
+_MODEL_RESULT_TRUNCATION_MARKER = "\n[Tool result truncated to fit the model message limit.]"
 
 
 class _Arguments(BaseModel):
@@ -81,11 +86,38 @@ class AIToolExecutionResult:
     output: str
 
     def to_model_content(self) -> str:
-        return json.dumps(
-            {"command": self.command, "result": self.output},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        def serialize(result: str) -> str:
+            return json.dumps(
+                {"command": self.command, "result": result},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+
+        if len(self.output) <= MAX_AI_MESSAGE_CONTENT_CHARS:
+            content = serialize(self.output)
+            if len(content) <= MAX_AI_MESSAGE_CONTENT_CHARS:
+                return content
+
+        low = 0
+        high = min(len(self.output), MAX_AI_MESSAGE_CONTENT_CHARS)
+        best: str | None = None
+        while low <= high:
+            middle = (low + high) // 2
+            candidate = serialize(
+                self.output[:middle].rstrip() + _MODEL_RESULT_TRUNCATION_MARKER
+            )
+            if len(candidate) <= MAX_AI_MESSAGE_CONTENT_CHARS:
+                best = candidate
+                low = middle + 1
+            else:
+                high = middle - 1
+        if best is not None:
+            return best
+
+        empty_result = serialize("")
+        if len(empty_result) > MAX_AI_MESSAGE_CONTENT_CHARS:
+            raise AIError("AI_TOOL_CALL_INVALID")
+        return empty_result
 
 
 _SPECS = (

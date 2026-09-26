@@ -119,7 +119,7 @@ class AIService:
                 status_code=410,
             )
 
-        business = await BusinessService(self.session).get(
+        business = await BusinessService(self.session).get_for_customer(
             self.tenant, self.tenant.business_id
         )
         if customer_session.selected_location_id is None:
@@ -139,7 +139,7 @@ class AIService:
             assistant_name = effective.display_name
             assistant_enabled = effective.enabled
             location_name = location.display_name
-        if not assistant_enabled or not business.active:
+        if not assistant_enabled:
             raise AIError("AI_DISABLED")
 
         if self._is_medical_advice_request(user_message):

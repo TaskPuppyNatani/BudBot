@@ -77,7 +77,7 @@ class ComplianceEngine:
             ) from exc
 
         customer_session = await self._resolve_session(session_or_id)
-        business = await BusinessService(self.session).get(
+        business = await BusinessService(self.session).get_for_customer(
             self.tenant,
             self.tenant.business_id,
             for_update=True,

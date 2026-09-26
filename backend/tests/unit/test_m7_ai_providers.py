@@ -1,5 +1,6 @@
 """Deterministic provider-transport and model-harness contract tests."""
 
+import asyncio
 import json
 
 import httpx
@@ -36,6 +37,7 @@ def _config(
     api_key: str | None = None,
     usage: bool = True,
     tools: bool = True,
+    timeout_seconds: float = 30.0,
 ) -> AIProviderConfig:
     return AIProviderConfig(
         provider=provider,
@@ -43,6 +45,7 @@ def _config(
         harness=harness,
         base_url=base_url,
         api_key=api_key,
+        timeout_seconds=timeout_seconds,
         capabilities=AICapabilities(
             tool_calling=tools,
             usage_reporting=usage,
@@ -51,6 +54,21 @@ def _config(
             system_role=True,
         ),
     )
+
+
+class _SlowStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes], delay_seconds: float) -> None:
+        self.chunks = chunks
+        self.delay_seconds = delay_seconds
+        self.closed = False
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            await asyncio.sleep(self.delay_seconds)
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def _request(*, tools: tuple[AIToolDefinition, ...] = ()) -> AIRequest:
@@ -420,6 +438,50 @@ async def test_timeout_and_unreachable_provider_are_normalized() -> None:
                 _request(), _config(), OpenAIChatHarness()
             )
     assert error.value.code == "AI_PROVIDER_UNAVAILABLE"
+
+
+async def test_total_deadline_allows_a_slow_response_that_finishes_in_time() -> None:
+    payload = json.dumps(
+        {
+            "choices": [{
+                "message": {"role": "assistant", "content": "slow but complete"},
+                "finish_reason": "stop",
+            }]
+        }
+    ).encode()
+    chunks = [payload[:20], payload[20:50], payload[50:]]
+    stream = _SlowStream(chunks, delay_seconds=0.005)
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, stream=stream)
+    )
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        response = await OpenAICompatibleTransport(client).generate(
+            _request(),
+            _config(timeout_seconds=0.5),
+            OpenAIChatHarness(),
+        )
+
+    assert response.content == "slow but complete"
+    assert stream.closed
+
+
+async def test_total_deadline_stops_a_provider_that_keeps_sending_small_chunks() -> None:
+    stream = _SlowStream([b"x"] * 100, delay_seconds=0.01)
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(200, stream=stream)
+    )
+
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(AIError) as error:
+            await OpenAICompatibleTransport(client).generate(
+                _request(),
+                _config(timeout_seconds=0.06),
+                OpenAIChatHarness(),
+            )
+
+    assert error.value.code == "AI_PROVIDER_TIMEOUT"
+    assert stream.closed
 
 
 async def test_provider_and_harness_registries_are_explicit_and_reject_unknown_keys() -> None:

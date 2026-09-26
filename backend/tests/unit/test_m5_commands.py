@@ -9,14 +9,16 @@ from sqlalchemy import update
 from budbot.commands.bootstrap import build_command_executor
 from budbot.commands.types import CommandExecutionContext, CommandScope
 from budbot.compliance.age_gate import AgeGateStatus
-from budbot.core.exceptions import CommandError
+from budbot.core.exceptions import CommandError, ResourceNotFound
 from budbot.core.tenancy import TenantContext
 from budbot.models.assistant import AssistantConfiguration
 from budbot.models.business import Business
 from budbot.models.knowledge import FAQEntry
 from budbot.models.location import Location, LocationHours
+from budbot.schemas.business import BusinessUpdate
 from budbot.schemas.business import StorePolicy
 from budbot.schemas.session import AgeAttestationRequest, CustomerSessionCreate
+from budbot.services.business_service import BusinessService
 from budbot.services.session_service import SessionService
 
 
@@ -219,6 +221,26 @@ async def test_customer_information_commands_are_deterministic_and_tenant_scoped
         await executor.execute("/directions", context)
     assert disabled.value.code == "COMMAND_UNAVAILABLE"
     assert business.id == context.tenant.business_id
+
+
+async def test_inactive_business_blocks_customer_commands_until_admin_reactivation(
+    db_session,
+) -> None:
+    context, business, _location = await _context(db_session)
+    executor = build_command_executor()
+
+    business.active = False
+    await db_session.flush()
+    with pytest.raises(ResourceNotFound) as inactive:
+        await executor.execute("/locations", context)
+    assert inactive.value.code == "BUSINESS_NOT_FOUND"
+
+    reactivated = await BusinessService(db_session).update(
+        context.tenant, business.id, BusinessUpdate(active=True)
+    )
+    assert reactivated.active is True
+    result = await executor.execute("/locations", context)
+    assert "Hawthorne" in result.output
 
 
 async def test_oregon_age_information_is_public_and_uses_profile_notices(db_session) -> None:
