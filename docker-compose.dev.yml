@@ -30,14 +30,19 @@ services:
       BUDBOT_ENVIRONMENT: development
       BUDBOT_DATABASE_URL: postgresql+asyncpg://${BUDBOT_DATABASE_USER:-budbot}:${BUDBOT_DATABASE_PASSWORD:-budbot_dev}@db:5432/${BUDBOT_DATABASE_NAME:-budbot}
       BUDBOT_CUSTOMER_SESSION_TTL_SECONDS: ${BUDBOT_CUSTOMER_SESSION_TTL_SECONDS:-86400}
+      BUDBOT_LOCAL_ASSETS_DIR: /app/local-assets
+    env_file:
+      - .env
     command:
       - /bin/sh
       - -c
-      - alembic upgrade head && uvicorn budbot.main:app --host 0.0.0.0 --port 8000 --reload
+      - alembic upgrade head && exec uvicorn budbot.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./backend:/app/backend
+      - ./frontend/widget:/app/frontend/widget:ro
+      - budbot_local_assets:/app/local-assets
     depends_on:
       db:
         condition: service_healthy
@@ -54,6 +59,8 @@ services:
       retries: 5
       start_period: 10s
     restart: unless-stopped
+    stop_grace_period: 30s
 
 volumes:
   budbot_postgres_data:
+  budbot_local_assets:

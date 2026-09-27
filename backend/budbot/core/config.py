@@ -1,6 +1,7 @@
 """Typed runtime configuration loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 import re
 from typing import Literal
 from urllib.parse import urlsplit
@@ -31,6 +32,7 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=10, ge=0, le=100)
     database_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     database_readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    local_assets_dir: Path = Path("local-data/assets")
     customer_session_ttl_seconds: int = Field(
         default=86_400, ge=60, le=2_592_000
     )

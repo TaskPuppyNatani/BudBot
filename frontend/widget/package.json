@@ -1,0 +1,6 @@
+{
+  "name": "@budbot/widget",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node test/widget.test.js" }
+}

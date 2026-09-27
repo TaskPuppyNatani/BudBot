@@ -11,6 +11,7 @@ COPY backend/pyproject.toml ./pyproject.toml
 COPY backend/budbot ./budbot
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/alembic ./alembic
+COPY frontend/widget /app/frontend/widget
 
 RUN pip install --no-cache-dir .
 

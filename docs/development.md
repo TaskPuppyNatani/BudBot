@@ -292,6 +292,9 @@ Scope:
 - chat UI;
 - slash-command autocomplete;
 - basic error states.
+- shared Tkinter local Control Center with cross-platform start/stop/restart/open;
+- development-only business branding editor and local widget preview;
+- validated, business-scoped local logo/avatar uploads that survive container restart.
 
 Acceptance:
 
@@ -300,6 +303,16 @@ Acceptance:
 - age gate is shown when required;
 - frontend cannot bypass backend enforcement;
 - no hard-coded assistant name.
+- Control Center can select an active local business and edit its customer-facing
+  business name/logo/color and assistant name/greeting/avatar;
+- development branding routes are not mounted outside development and are limited
+  to loopback browser requests;
+- business logos and assistant avatars remain independent, and location assistant
+  overrides are preserved;
+- launcher operations preserve existing `.env`, PostgreSQL data, and uploaded assets.
+
+The local branding editor is an operator convenience for this development preview;
+it is not the authenticated M9 admin UI and must not be exposed publicly.
 
 ### M9 - Admin UI and admin commands
 

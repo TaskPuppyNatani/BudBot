@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=BudBot Control Center
+Comment=Start, stop, restart, and preview BudBot locally
+Exec=/home/natani/Projects/BudBot/launchers/open_control_center.sh
+Path=/home/natani/Projects/BudBot
+Icon=applications-internet
+Terminal=false
+Categories=Development;WebDevelopment;
