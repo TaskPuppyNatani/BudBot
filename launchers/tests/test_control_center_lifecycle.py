@@ -3,12 +3,27 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from branding_client import BrandingClientError
 from control_center import BudBotControlCenter, MAX_EVENTS_PER_POLL
+from service_controller import BudBotServiceError
+
+BUSINESS_ID = "12345678-1234-5678-1234-567812345678"
+PREVIEW_URL = f"http://127.0.0.1:8000/widget/?business_id={BUSINESS_ID}"
+BUSINESSES = [{"id": BUSINESS_ID, "display_name": "Demo Business"}]
+BRANDING = {
+    "business": {"display_name": "Demo Business", "logo_reference": None},
+    "assistant": {
+        "display_name": "BudBot",
+        "greeting": "Hello",
+        "avatar_reference": None,
+    },
+}
 
 
 def make_center(**attributes):
@@ -16,6 +31,7 @@ def make_center(**attributes):
     center.busy = False
     center._close_after_operation = False
     center._window_closed = False
+    center._reporting_callback_error = False
     center._poll_after_id = None
     center.events = queue.Queue()
     center.progress = Mock()
@@ -25,6 +41,33 @@ def make_center(**attributes):
     center.destroy = Mock()
     center.after_cancel = Mock()
     center.controller = Mock()
+    for name, value in attributes.items():
+        setattr(center, name, value)
+    return center
+
+
+def make_stateful_center(**attributes):
+    center = make_center(
+        state="Starting",
+        business_id=None,
+        message_label=Mock(),
+        status_label=Mock(),
+        status_dot=Mock(),
+        status_circle="circle",
+        business_combo=Mock(),
+        start_button=Mock(),
+        stop_button=Mock(),
+        restart_button=Mock(),
+        open_button=Mock(),
+        save_button=Mock(),
+        after=Mock(return_value="poll-next"),
+    )
+    center._set_status = BudBotControlCenter._set_status.__get__(center)
+    center._refresh_buttons = BudBotControlCenter._refresh_buttons.__get__(center)
+    center._apply_businesses = Mock()
+    center._apply_branding = Mock()
+    center._show_page = Mock()
+    center._open_preview = Mock()
     for name, value in attributes.items():
         setattr(center, name, value)
     return center
@@ -94,18 +137,119 @@ class ControlCenterLifecycleTests(unittest.TestCase):
         self.assertEqual(kind, "branding_error")
         self.assertIn("save failed", message)
 
-    def test_poll_callback_is_rescheduled_even_if_an_event_handler_raises(self) -> None:
+    def test_poll_callback_reports_event_handler_errors_and_is_rescheduled(self) -> None:
         center = make_center(busy=True)
         center.events.put(("progress", "Checking Docker…"))
         center.message_label = Mock()
         center.message_label.configure.side_effect = RuntimeError("widget update failed")
         center.after = Mock(return_value="poll-next")
 
-        with self.assertRaisesRegex(RuntimeError, "widget update failed"):
+        with patch("control_center.messagebox.showerror") as showerror:
             center._poll_events()
 
+        self.assertTrue(center.busy)  # The service worker is still in flight.
+        showerror.assert_called_once()
+        self.assertIn("widget update failed", showerror.call_args.args[1])
         center.after.assert_called_once_with(100, center._poll_events)
         self.assertEqual(center._poll_after_id, "poll-next")
+
+    def test_fresh_start_completion_enables_save_stop_and_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            center = make_stateful_center()
+            center.controller.start.return_value = PREVIEW_URL
+            center.controller._business_id_from_url.return_value = BUSINESS_ID
+            center.controller._valid_uuid.return_value = True
+            center.controller.preview_file = Path(folder) / "preview-url.txt"
+            center.controller.selected_business_file = Path(folder) / "selected-business.txt"
+            center._load_business_data = Mock(return_value=(BUSINESSES, BRANDING, b"", b""))
+
+            center._service_worker("start")
+            center._poll_events()
+
+        self.assertFalse(center.busy)
+        self.assertEqual(center.state, "Running")
+        center.start_button.set_enabled.assert_called_once_with(False)
+        center.stop_button.set_enabled.assert_called_once_with(True)
+        center.restart_button.set_enabled.assert_called_once_with(True)
+        center.save_button.set_enabled.assert_called_once_with(True)
+
+    def test_fresh_start_failure_clears_busy_and_keeps_recovery_actions_available(self) -> None:
+        center = make_stateful_center(busy=True)
+        center.controller.start.side_effect = BudBotServiceError("Docker is unavailable")
+
+        center._service_worker("start")
+        with patch("control_center.messagebox.showerror"):
+            center._poll_events()
+
+        self.assertFalse(center.busy)
+        self.assertEqual(center.state, "Error")
+        center.start_button.set_enabled.assert_called_once_with(True)
+        center.stop_button.set_enabled.assert_called_once_with(True)
+        center.restart_button.set_enabled.assert_called_once_with(True)
+        center.save_button.set_enabled.assert_called_once_with(False)
+
+    def test_reconnect_completion_enables_save_stop_and_restart(self) -> None:
+        center = make_stateful_center(busy=True)
+        center.controller.detect_running.return_value = PREVIEW_URL
+        center.controller._business_id_from_url.return_value = BUSINESS_ID
+        center.branding_client = Mock()
+        center.branding_client.list_businesses.return_value = BUSINESSES
+        center._load_business_data = Mock(return_value=(BUSINESSES, BRANDING, b"", b""))
+
+        center._detect_worker()
+        center._poll_events()
+
+        self.assertFalse(center.busy)
+        self.assertEqual(center.state, "Running")
+        center.start_button.set_enabled.assert_called_once_with(False)
+        center.stop_button.set_enabled.assert_called_once_with(True)
+        center.restart_button.set_enabled.assert_called_once_with(True)
+        center.save_button.set_enabled.assert_called_once_with(True)
+
+    def test_reconnect_branding_failure_clears_busy_and_keeps_recovery_actions_available(self) -> None:
+        center = make_stateful_center(busy=True)
+        center.controller.detect_running.return_value = PREVIEW_URL
+        center.controller._business_id_from_url.return_value = BUSINESS_ID
+        center.branding_client = Mock()
+        center.branding_client.list_businesses.side_effect = BrandingClientError("branding unavailable")
+
+        center._detect_worker()
+        with patch("control_center.messagebox.showerror") as showerror:
+            center._poll_events()
+
+        self.assertFalse(center.busy)
+        self.assertEqual(center.state, "Error")
+        showerror.assert_called_once()
+        self.assertIn("branding unavailable", showerror.call_args.args[1])
+        center.start_button.set_enabled.assert_called_once_with(True)
+        center.stop_button.set_enabled.assert_called_once_with(True)
+        center.restart_button.set_enabled.assert_called_once_with(True)
+        center.save_button.set_enabled.assert_called_once_with(False)
+
+    def test_start_completion_handler_exception_is_visible_and_recoverable(self) -> None:
+        center = make_stateful_center(busy=True)
+        center._apply_branding.side_effect = RuntimeError("Tk branding update failed")
+        center.events.put(("service_done", {
+            "state": "Running",
+            "action": "start",
+            "url": PREVIEW_URL,
+            "business_id": BUSINESS_ID,
+            "businesses": BUSINESSES,
+            "branding": BRANDING,
+            "logo": b"",
+            "avatar": b"",
+        }))
+
+        with patch("control_center.messagebox.showerror") as showerror:
+            center._poll_events()
+
+        self.assertFalse(center.busy)
+        self.assertEqual(center.state, "Error")
+        self.assertIn("Tk branding update failed", center.message_label.configure.call_args.kwargs["text"])
+        showerror.assert_called_once()
+        center.stop_button.set_enabled.assert_called_once_with(True)
+        center.restart_button.set_enabled.assert_called_once_with(True)
+        center.save_button.set_enabled.assert_called_once_with(False)
 
     def test_poll_callback_bounds_queue_work_and_reschedules_remaining_events(self) -> None:
         message_label = Mock()

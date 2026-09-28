@@ -10,10 +10,32 @@ from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import control_center
-from control_center import calculate_window_geometry, create_page_host, detect_work_area, responsive_layout
+from control_center import (
+    calculate_window_geometry,
+    create_brand_preview_frame,
+    create_page_host,
+    detect_work_area,
+    responsive_layout,
+)
 
 
 class ControlCenterLayoutTests(unittest.TestCase):
+    def test_brand_preview_container_uses_tk_frame_highlight_options(self) -> None:
+        parent = object()
+        frame = Mock()
+        with patch.object(control_center.tk, "Frame", return_value=frame) as tk_frame:
+            result = create_brand_preview_frame(parent)
+
+        self.assertIs(result, frame)
+        tk_frame.assert_called_once_with(
+            parent,
+            background=control_center.COLORS["surface"],
+            borderwidth=0,
+            highlightbackground=control_center.COLORS["green"],
+            highlightcolor=control_center.COLORS["green"],
+            highlightthickness=1,
+        )
+
     def test_page_host_expands_in_parent_without_propagating_scroll_content_size(self) -> None:
         parent = object()
         pages = Mock()

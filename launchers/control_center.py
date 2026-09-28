@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import ctypes
+from datetime import datetime
 import math
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import traceback
 from tkinter import colorchooser, filedialog, messagebox, ttk
 import webbrowser
 
@@ -56,6 +58,9 @@ IMAGE_TYPES = (".png", ".jpg", ".jpeg", ".webp")
 DEFAULT_WINDOW_SIZE = (1280, 860)
 MIN_COMFORTABLE_SIZE = (1180, 780)
 MAX_EVENTS_PER_POLL = 100
+TERMINAL_EVENT_KINDS = frozenset(
+    {"detected", "detection_error", "service_done", "business_loaded", "branding_saved", "branding_error"}
+)
 
 
 def calculate_window_geometry(
@@ -107,6 +112,18 @@ def create_page_host(parent: tk.Misc) -> ttk.Frame:
     pages.pack(fill="both", expand=True)
     pages.pack_propagate(False)
     return pages
+
+
+def create_brand_preview_frame(parent: tk.Misc) -> tk.Frame:
+    """Create a preview border that supports Tk's dynamic highlight options."""
+    return tk.Frame(
+        parent,
+        background=COLORS["surface"],
+        borderwidth=0,
+        highlightbackground=COLORS["green"],
+        highlightcolor=COLORS["green"],
+        highlightthickness=1,
+    )
 
 
 def detect_work_area(root: tk.Misc, *, platform_name: str | None = None) -> tuple[int, int, int, int]:
@@ -384,6 +401,7 @@ class BudBotControlCenter(tk.Tk):
         self.busy = False
         self._close_after_operation = False
         self._window_closed = False
+        self._reporting_callback_error = False
         self._poll_after_id: str | None = None
         self.state = "Stopped"
         self.preview_url: str | None = None
@@ -692,9 +710,9 @@ class BudBotControlCenter(tk.Tk):
         ttk.Label(preview, text="Widget Preview", style="Section.TLabel").pack(anchor="w")
         self.brand_preview_description = ttk.Label(preview, text="Updates as you edit. Save to apply it to customers.", style="CardMuted.TLabel", wraplength=300, justify="left")
         self.brand_preview_description.pack(anchor="w", fill="x", pady=(3, 12))
-        self.brand_preview = ttk.Frame(preview, style="Card.TFrame", padding=12)
+        self.brand_preview = create_brand_preview_frame(preview)
         self.brand_preview.pack(fill="both", expand=True)
-        self.brand_preview.configure(relief="solid")
+        self.brand_preview.configure(padx=12, pady=12)
         self.brand_preview_header = ttk.Frame(self.brand_preview, style="Card.TFrame")
         self.brand_preview_header.pack(fill="x")
         self.brand_preview_logo = tk.Label(self.brand_preview_header, text="Your logo here", width=15, height=4, bg=COLORS["surface2"], fg=COLORS["muted"], font=("Sans", 9))
@@ -856,13 +874,23 @@ class BudBotControlCenter(tk.Tk):
         if self.busy:
             return
         self.busy = True
+        self._log_lifecycle(f"{action} operation started")
         if action == "stop":
             self._set_status("Stopping", "Stopping BudBot services. Database data and configuration are kept.")
         else:
             self._set_status("Starting", "Checking Docker and preparing the local demo…")
         self.progress.start(12)
         self._refresh_buttons()
-        threading.Thread(target=self._service_worker, args=(action,), daemon=True).start()
+        self._dispatch_worker(
+            self._service_worker,
+            (action,),
+            "service_done",
+            lambda exc: {
+                "state": "Error",
+                "action": action,
+                "message": f"BudBot could not start its background worker: {exc}",
+            },
+        )
 
     def start_budbot(self) -> None:
         self._begin_service("start")
@@ -881,7 +909,12 @@ class BudBotControlCenter(tk.Tk):
         self._open_preview(self.preview_url)
 
     def _open_preview(self, url: str) -> None:
-        threading.Thread(target=self._browser_worker, args=(url,), daemon=True).start()
+        self._dispatch_worker(
+            self._browser_worker,
+            (url,),
+            "browser_result",
+            lambda exc: {"url": url, "opened": False, "error": str(exc)},
+        )
 
     def _browser_worker(self, url: str) -> None:
         try:
@@ -895,6 +928,68 @@ class BudBotControlCenter(tk.Tk):
     def _progress_from_worker(self, message: str) -> None:
         self.events.put(("progress", message))
 
+    def _log_lifecycle(self, detail: str) -> None:
+        """Append Control Center lifecycle diagnostics beside Docker output."""
+        try:
+            with self.controller.log_file.open("a", encoding="utf-8") as log:
+                timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+                log.write(f"\n{timestamp} [Control Center] {detail}\n")
+        except Exception:
+            # Logging must never stop startup or prevent the GUI from recovering.
+            pass
+
+    def _dispatch_worker(self, target, args, failure_kind: str, failure_payload) -> None:
+        """Start a worker and enqueue a terminal error if thread creation fails."""
+        try:
+            threading.Thread(target=target, args=args, daemon=True).start()
+        except Exception as exc:
+            self._log_lifecycle(f"could not start {target.__name__}: {exc}\n{traceback.format_exc()}")
+            self.events.put((failure_kind, failure_payload(exc)))
+
+    def _handle_event_exception(self, kind: str, exc: Exception, tb=None) -> None:
+        """Turn a Tk event-handler failure into a visible, recoverable state."""
+        if kind in TERMINAL_EVENT_KINDS:
+            self.busy = False
+        if not self.busy:
+            try:
+                self.progress.stop()
+            except Exception as progress_exc:
+                self._log_lifecycle(f"could not stop progress animation: {progress_exc}")
+
+        detail = "".join(traceback.format_exception(type(exc), exc, tb or exc.__traceback__))
+        log_path = getattr(self.controller, "log_file", "the Control Center log")
+        message = (
+            f"The Control Center could not finish handling {kind}: {exc}. "
+            "BudBot may already be running. Use Stop or Restart to recover, then retry. "
+            f"Details: {log_path}"
+        )
+        self._log_lifecycle(f"event handler failed ({kind}):\n{detail}")
+        try:
+            self._set_status("Error", message)
+        except Exception as status_exc:
+            self._log_lifecycle(f"could not display the Control Center error status: {status_exc}")
+        try:
+            self._refresh_buttons()
+        except Exception as buttons_exc:
+            self._log_lifecycle(f"could not refresh buttons after event error: {buttons_exc}")
+        if self._close_after_operation or self._window_closed or self._reporting_callback_error:
+            return
+        self._reporting_callback_error = True
+        try:
+            messagebox.showerror(
+                "Control Center error",
+                f"{message}\n\nTechnical detail: {type(exc).__name__}: {exc}",
+                parent=self,
+            )
+        except Exception as dialog_exc:
+            self._log_lifecycle(f"could not show the Control Center error dialog: {dialog_exc}")
+        finally:
+            self._reporting_callback_error = False
+
+    def report_callback_exception(self, exc, val, tb) -> None:
+        """Make unexpected Tk callbacks visible and provide an operational recovery path."""
+        self._handle_event_exception("Tk callback", val, tb)
+
     def _load_business_data(self, business_id: str) -> tuple[list[dict[str, str]], dict[str, dict[str, object]], bytes, bytes]:
         businesses = self.branding_client.list_businesses()
         branding = self.branding_client.load(business_id)
@@ -905,12 +1000,15 @@ class BudBotControlCenter(tk.Tk):
         return businesses, branding, logo, avatar
 
     def _service_worker(self, action: str) -> None:
+        self._log_lifecycle(f"{action} worker started")
         try:
             if action == "stop":
                 self.controller.stop()
+                self._log_lifecycle("stop worker completed; queuing service_done")
                 self.events.put(("service_done", {"state": "Stopped", "action": action}))
                 return
             url = self.controller.restart() if action == "restart" else self.controller.start()
+            self._log_lifecycle(f"service controller completed {action}; loading business branding")
             demo_id = self.controller._business_id_from_url(url)
             saved_selection = self.controller.selected_business_file
             business_id = saved_selection.read_text(encoding="utf-8").strip() if saved_selection.exists() else demo_id
@@ -926,9 +1024,12 @@ class BudBotControlCenter(tk.Tk):
             saved_selection.parent.mkdir(parents=True, exist_ok=True)
             saved_selection.write_text(business_id + "\n", encoding="utf-8")
             self.events.put(("service_done", {"state": "Running", "action": action, "url": preview, "business_id": business_id, "businesses": businesses, "branding": branding, "logo": logo, "avatar": avatar}))
+            self._log_lifecycle(f"{action} worker queued service_done Running for business {business_id}")
         except (BudBotServiceError, BrandingClientError, OSError, ValueError) as exc:
+            self._log_lifecycle(f"{action} worker failed: {exc}\n{traceback.format_exc()}")
             self.events.put(("service_done", {"state": "Error", "action": action, "message": f"BudBot operation failed: {exc}"}))
         except Exception as exc:
+            self._log_lifecycle(f"{action} worker failed unexpectedly: {exc}\n{traceback.format_exc()}")
             self.events.put(("service_done", {"state": "Error", "action": action, "message": f"BudBot could not complete the operation: {exc}"}))
 
     def _detect_existing_stack(self) -> None:
@@ -938,12 +1039,20 @@ class BudBotControlCenter(tk.Tk):
         self._set_status("Starting", "Checking whether the local BudBot service is already running…")
         self.progress.start(12)
         self._refresh_buttons()
-        threading.Thread(target=self._detect_worker, daemon=True).start()
+        self._log_lifecycle("existing-stack detection started")
+        self._dispatch_worker(
+            self._detect_worker,
+            (),
+            "detection_error",
+            lambda exc: f"Could not start existing-stack detection: {exc}",
+        )
 
     def _detect_worker(self) -> None:
+        self._log_lifecycle("existing-stack detection worker started")
         try:
             url = self.controller.detect_running()
             if not url:
+                self._log_lifecycle("existing-stack detection found no reachable saved preview")
                 self.events.put(("detected", None))
                 return
             business_id = self.controller._business_id_from_url(url)
@@ -957,9 +1066,12 @@ class BudBotControlCenter(tk.Tk):
                 self.controller.selected_business_file.write_text(business_id + "\n", encoding="utf-8")
             businesses, branding, logo, avatar = self._load_business_data(business_id)
             self.events.put(("detected", {"url": url, "business_id": business_id, "businesses": businesses, "branding": branding, "logo": logo, "avatar": avatar}))
-        except (BudBotServiceError, BrandingClientError, OSError, ValueError):
-            self.events.put(("detected", None))
+            self._log_lifecycle(f"existing-stack detection queued detected for business {business_id}")
+        except (BudBotServiceError, BrandingClientError, OSError, ValueError) as exc:
+            self._log_lifecycle(f"existing-stack detection failed: {exc}\n{traceback.format_exc()}")
+            self.events.put(("detection_error", f"Could not reconnect to the running BudBot service: {exc}"))
         except Exception as exc:
+            self._log_lifecycle(f"existing-stack detection failed unexpectedly: {exc}\n{traceback.format_exc()}")
             self.events.put(("detection_error", f"Could not check the BudBot service: {exc}"))
 
     def _business_selected(self, _event=None) -> None:
@@ -995,7 +1107,12 @@ class BudBotControlCenter(tk.Tk):
         self._refresh_buttons()
         self.message_label.configure(text="Loading this business's saved branding…")
         self.progress.start(12)
-        threading.Thread(target=self._branding_worker, args=("load", business_id, None), daemon=True).start()
+        self._dispatch_worker(
+            self._branding_worker,
+            ("load", business_id, None),
+            "branding_error",
+            lambda exc: f"Could not start the business branding load: {exc}",
+        )
 
     def _branding_worker(self, action: str, business_id: str, changes: dict[str, object] | None) -> None:
         try:
@@ -1258,7 +1375,12 @@ class BudBotControlCenter(tk.Tk):
             messagebox.showerror("Invalid image", str(exc), parent=self)
             return
         self._begin_branding_action("Saving branding settings and validating images…")
-        threading.Thread(target=self._branding_worker, args=("save", self.business_id, changes), daemon=True).start()
+        self._dispatch_worker(
+            self._branding_worker,
+            ("save", self.business_id, changes),
+            "branding_error",
+            lambda exc: f"Could not start the branding save: {exc}",
+        )
 
     def _restore_defaults(self) -> None:
         if not self.business_id or self.busy:
@@ -1275,109 +1397,41 @@ class BudBotControlCenter(tk.Tk):
             "remove_assistant_avatar": True,
         }
         self._begin_branding_action("Restoring the default logo and color settings…")
-        threading.Thread(target=self._branding_worker, args=("save", self.business_id, changes), daemon=True).start()
+        self._dispatch_worker(
+            self._branding_worker,
+            ("save", self.business_id, changes),
+            "branding_error",
+            lambda exc: f"Could not start the branding restore: {exc}",
+        )
 
     def _begin_branding_action(self, message: str) -> None:
         self.busy = True
         self.message_label.configure(text=message)
         self.progress.start(12)
         self._refresh_buttons()
+        self._log_lifecycle(f"branding operation started: {message}")
 
     def _poll_events(self) -> None:
         self._poll_after_id = None
         try:
             processed = 0
             while processed < MAX_EVENTS_PER_POLL:
-                kind, payload = self.events.get_nowait()
+                try:
+                    kind, payload = self.events.get_nowait()
+                except queue.Empty:
+                    break
                 processed += 1
-                if kind == "progress":
-                    message = str(payload)
-                    self.message_label.configure(text=message)
-                    if message.lower().startswith(("checking docker", "preparing local", "building", "waiting", "creating")):
-                        self.status_label.configure(text="Starting", foreground=STATE_COLORS["Starting"])
-                        self.status_dot.itemconfigure(self.status_circle, fill=STATE_COLORS["Starting"])
-                    elif message.lower().startswith("stopping"):
-                        self.status_label.configure(text="Stopping", foreground=STATE_COLORS["Stopping"])
-                        self.status_dot.itemconfigure(self.status_circle, fill=STATE_COLORS["Stopping"])
-                elif kind == "detected":
-                    self.busy = False
-                    self.progress.stop()
-                    if payload:
-                        data = payload
-                        self.preview_url = data["url"]
-                        self.business_id = data["business_id"]
-                        self._apply_businesses(data["businesses"])
-                        self._apply_branding(data["business_id"], data["branding"], data["logo"], data["avatar"])
-                        self._set_status("Running", "BudBot is running. Select a business and open its live widget preview.")
-                    else:
-                        self.preview_url = None
-                        self._set_status("Stopped", "BudBot is not running.")
-                    self._refresh_buttons()
-                elif kind == "detection_error":
-                    self.busy = False
-                    self.progress.stop()
-                    self.preview_url = None
-                    self._set_status("Error", str(payload))
-                    self._refresh_buttons()
-                    if not self._close_after_operation:
-                        messagebox.showerror("BudBot status error", str(payload), parent=self)
-                elif kind == "service_done":
-                    self.busy = False
-                    self.progress.stop()
-                    data = payload
-                    if data["state"] == "Running":
-                        self.preview_url = data["url"]
-                        self.business_id = data["business_id"]
-                        if not self._close_after_operation:
-                            self._apply_businesses(data["businesses"])
-                            self._apply_branding(data["business_id"], data["branding"], data["logo"], data["avatar"])
-                            self._set_status("Running", "BudBot is online and ready. Your customer widget has opened.")
-                            self._show_page("Dashboard")
-                            self._open_preview(self.preview_url)
-                    elif data["state"] == "Stopped":
-                        self.preview_url = None
-                        self._set_status("Stopped", "BudBot stopped safely. Database and uploaded assets were kept.")
-                    else:
-                        self._set_status("Error", str(data.get("message", "BudBot could not start.")))
-                        if not self._close_after_operation:
-                            messagebox.showerror("BudBot error", str(data.get("message", "BudBot could not start.")), parent=self)
-                    self._refresh_buttons()
-                elif kind == "business_loaded":
-                    self.busy = False
-                    self.progress.stop()
-                    data = payload
-                    self.business_id = data["business_id"]
-                    self._apply_businesses(data["businesses"])
-                    self._apply_branding(data["business_id"], data["branding"], data["logo"], data["avatar"])
-                    self.preview_url = f"http://127.0.0.1:8000/widget/?business_id={self.business_id}"
-                    self.controller.selected_business_file.write_text(self.business_id + "\n", encoding="utf-8")
-                    self.controller.preview_file.write_text(self.preview_url + "\n", encoding="utf-8")
-                    self.message_label.configure(text="Business branding loaded.")
-                    self._refresh_buttons()
-                elif kind == "branding_saved":
-                    self.busy = False
-                    self.progress.stop()
-                    data = payload
-                    self._apply_branding(self.business_id or "", data["branding"], data["logo"], data["avatar"])
-                    self.message_label.configure(text="Branding saved for this business.")
-                    self._refresh_buttons()
-                elif kind == "branding_error":
-                    self.busy = False
-                    self.progress.stop()
-                    self.message_label.configure(text="Branding could not be saved.")
-                    if not self._close_after_operation:
-                        messagebox.showerror("Branding error", str(payload), parent=self)
-                    self._refresh_buttons()
-                elif kind == "browser_result":
-                    if not payload["opened"] and not self._window_closed:
-                        detail = payload.get("error") or "The browser did not accept the request."
-                        messagebox.showerror(
-                            "Open BudBot",
-                            f"Could not open the browser. Open this address manually:\n{payload['url']}\n\n{detail}",
-                            parent=self,
+                if kind in TERMINAL_EVENT_KINDS:
+                    self._log_lifecycle(f"event dequeued: {kind}")
+                try:
+                    self._handle_event(kind, payload)
+                except Exception as exc:
+                    self._handle_event_exception(kind, exc)
+                else:
+                    if kind in TERMINAL_EVENT_KINDS:
+                        self._log_lifecycle(
+                            f"event handled: {kind}; state={self.state}; busy={self.busy}"
                         )
-        except queue.Empty:
-            pass
         finally:
             if self._close_after_operation and not self.busy:
                 self._destroy_window()
@@ -1386,6 +1440,94 @@ class BudBotControlCenter(tk.Tk):
                     self._poll_after_id = self.after(100, self._poll_events)
                 except tk.TclError:
                     self._window_closed = True
+
+    def _handle_event(self, kind: str, payload: object) -> None:
+        if kind == "progress":
+            message = str(payload)
+            self.message_label.configure(text=message)
+            if message.lower().startswith(("checking docker", "preparing local", "building", "waiting", "creating")):
+                self.status_label.configure(text="Starting", foreground=STATE_COLORS["Starting"])
+                self.status_dot.itemconfigure(self.status_circle, fill=STATE_COLORS["Starting"])
+            elif message.lower().startswith("stopping"):
+                self.status_label.configure(text="Stopping", foreground=STATE_COLORS["Stopping"])
+                self.status_dot.itemconfigure(self.status_circle, fill=STATE_COLORS["Stopping"])
+        elif kind == "detected":
+            self.busy = False
+            self.progress.stop()
+            if payload:
+                data = payload
+                self.preview_url = data["url"]
+                self.business_id = data["business_id"]
+                self._apply_businesses(data["businesses"])
+                self._apply_branding(data["business_id"], data["branding"], data["logo"], data["avatar"])
+                self._set_status("Running", "BudBot is running. Select a business and open its live widget preview.")
+            else:
+                self.preview_url = None
+                self._set_status("Stopped", "BudBot is not running.")
+            self._refresh_buttons()
+        elif kind == "detection_error":
+            self.busy = False
+            self.progress.stop()
+            self.preview_url = None
+            self._set_status("Error", str(payload))
+            self._refresh_buttons()
+            if not self._close_after_operation:
+                messagebox.showerror("BudBot status error", str(payload), parent=self)
+        elif kind == "service_done":
+            self.busy = False
+            self.progress.stop()
+            data = payload
+            if data["state"] == "Running":
+                self.preview_url = data["url"]
+                self.business_id = data["business_id"]
+                if not self._close_after_operation:
+                    self._apply_businesses(data["businesses"])
+                    self._apply_branding(data["business_id"], data["branding"], data["logo"], data["avatar"])
+                    self._set_status("Running", "BudBot is online and ready. Your customer widget has opened.")
+                    self._show_page("Dashboard")
+                    self._open_preview(self.preview_url)
+            elif data["state"] == "Stopped":
+                self.preview_url = None
+                self._set_status("Stopped", "BudBot stopped safely. Database and uploaded assets were kept.")
+            else:
+                self._set_status("Error", str(data.get("message", "BudBot could not start.")))
+                if not self._close_after_operation:
+                    messagebox.showerror("BudBot error", str(data.get("message", "BudBot could not start.")), parent=self)
+            self._refresh_buttons()
+        elif kind == "business_loaded":
+            self.busy = False
+            self.progress.stop()
+            data = payload
+            self.business_id = data["business_id"]
+            self._apply_businesses(data["businesses"])
+            self._apply_branding(data["business_id"], data["branding"], data["logo"], data["avatar"])
+            self.preview_url = f"http://127.0.0.1:8000/widget/?business_id={self.business_id}"
+            self.controller.selected_business_file.write_text(self.business_id + "\n", encoding="utf-8")
+            self.controller.preview_file.write_text(self.preview_url + "\n", encoding="utf-8")
+            self.message_label.configure(text="Business branding loaded.")
+            self._refresh_buttons()
+        elif kind == "branding_saved":
+            self.busy = False
+            self.progress.stop()
+            data = payload
+            self._apply_branding(self.business_id or "", data["branding"], data["logo"], data["avatar"])
+            self.message_label.configure(text="Branding saved for this business.")
+            self._refresh_buttons()
+        elif kind == "branding_error":
+            self.busy = False
+            self.progress.stop()
+            self.message_label.configure(text="Branding could not be saved.")
+            if not self._close_after_operation:
+                messagebox.showerror("Branding error", str(payload), parent=self)
+            self._refresh_buttons()
+        elif kind == "browser_result":
+            if not payload["opened"] and not self._window_closed:
+                detail = payload.get("error") or "The browser did not accept the request."
+                messagebox.showerror(
+                    "Open BudBot",
+                    f"Could not open the browser. Open this address manually:\n{payload['url']}\n\n{detail}",
+                    parent=self,
+                )
 
     def _close(self) -> None:
         if self.busy:

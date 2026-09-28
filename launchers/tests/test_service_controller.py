@@ -1,4 +1,5 @@
 import sys
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -7,7 +8,11 @@ from urllib.error import URLError
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from service_controller import BudBotServiceController, BudBotServiceError
+from service_controller import (
+    DOCKER_COMMAND_TIMEOUT_SECONDS,
+    BudBotServiceController,
+    BudBotServiceError,
+)
 
 
 class ServiceControllerTests(unittest.TestCase):
@@ -54,25 +59,37 @@ class ServiceControllerTests(unittest.TestCase):
     def test_process_execution_is_shell_free_and_windows_is_hidden(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             controller = self.make_controller(Path(folder), operating_system="Windows")
-            process = Mock()
-            process.stdout = ["running\n"]
-            process.wait.return_value = 0
-            process_context = Mock()
-            process_context.__enter__ = Mock(return_value=process)
-            process_context.__exit__ = Mock(return_value=False)
             startup = SimpleNamespace(dwFlags=0)
             with patch("service_controller.subprocess.STARTUPINFO", return_value=startup, create=True), patch(
                 "service_controller.subprocess.STARTF_USESHOWWINDOW", 1, create=True
             ), patch(
                 "service_controller.subprocess.CREATE_NO_WINDOW", 0x08000000, create=True
             ), patch(
-                "service_controller.subprocess.Popen", return_value=process_context
-            ) as popen:
-                controller._run(["docker", "info"], "Docker failed")
-            self.assertFalse(popen.call_args.kwargs["shell"])
-            self.assertEqual(popen.call_args.kwargs["creationflags"], 0x08000000)
-            self.assertIs(popen.call_args.kwargs["startupinfo"], startup)
+                "service_controller.subprocess.run",
+                return_value=SimpleNamespace(stdout="running\n", returncode=0),
+            ) as run:
+                output = controller._run(["docker", "info"], "Docker failed")
+            self.assertEqual(output, "running\n")
+            self.assertFalse(run.call_args.kwargs["shell"])
+            self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
+            self.assertIs(run.call_args.kwargs["startupinfo"], startup)
+            self.assertEqual(run.call_args.kwargs["timeout"], DOCKER_COMMAND_TIMEOUT_SECONDS)
             self.assertEqual(startup.dwFlags, 1)
+
+    def test_docker_command_timeout_is_actionable_and_preserves_output_in_log(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = self.make_controller(Path(folder))
+            timeout = subprocess.TimeoutExpired(
+                ["docker", "compose", "up"],
+                DOCKER_COMMAND_TIMEOUT_SECONDS,
+                output=b"still building\n",
+            )
+            with patch("service_controller.subprocess.run", side_effect=timeout):
+                with self.assertRaisesRegex(BudBotServiceError, "timed out after 30 minutes") as error:
+                    controller._run(["docker", "compose", "up"], "BudBot could not start.")
+
+            self.assertIn("use Stop or Restart", str(error.exception))
+            self.assertIn("still building", controller.log_file.read_text(encoding="utf-8"))
 
     def test_start_orchestrates_compose_and_persists_preview_url(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

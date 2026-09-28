@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 from uuid import UUID
 
 Progress = Callable[[str], None]
+DOCKER_COMMAND_TIMEOUT_SECONDS = 30 * 60
 
 
 class BudBotServiceError(RuntimeError):
@@ -65,35 +66,46 @@ class BudBotServiceController:
         if is_windows:
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        output: list[str] = []
         try:
             with self.log_file.open("a", encoding="utf-8") as log:
                 log.write("\n$ " + subprocess.list2cmdline(arguments) + "\n")
-                with subprocess.Popen(
-                    arguments,
-                    cwd=self.root,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    errors="replace",
-                    bufsize=1,
-                    shell=False,
-                    creationflags=creationflags,
-                    startupinfo=startupinfo,
-                ) as process:
-                    assert process.stdout is not None
-                    for line in process.stdout:
-                        log.write(line)
-                        log.flush()
-                        output.append(line)
-                        if any(word in line.lower() for word in ("building", "pulling", "extracting")):
-                            self.progress("Building the local containers… first launch may take a few minutes.")
-                    result = process.wait()
+                log.flush()
+                try:
+                    result = subprocess.run(
+                        arguments,
+                        cwd=self.root,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        errors="replace",
+                        shell=False,
+                        creationflags=creationflags,
+                        startupinfo=startupinfo,
+                        timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    output = exc.stdout or ""
+                    if isinstance(output, bytes):
+                        output = output.decode("utf-8", errors="replace")
+                    log.write(output)
+                    log.flush()
+                    guidance = failure or "The Docker command did not finish."
+                    raise BudBotServiceError(
+                        f"{guidance}\nThe Docker command timed out after "
+                        f"{DOCKER_COMMAND_TIMEOUT_SECONDS // 60} minutes. "
+                        f"Check Docker, then use Stop or Restart before retrying. "
+                        f"Details: {self.log_file}"
+                    ) from None
+                output = result.stdout or ""
+                log.write(output)
+                log.flush()
         except OSError as exc:
             raise BudBotServiceError(f"Could not run Docker: {exc}") from None
-        if result:
+        if any(word in output.lower() for word in ("building", "pulling", "extracting")):
+            self.progress("Building the local containers… first launch may take a few minutes.")
+        if result.returncode:
             raise BudBotServiceError(f"{failure}\nDetails: {self.log_file}")
-        return "".join(output)
+        return output
 
     def _check_docker(self) -> None:
         if shutil.which("docker") is None:
