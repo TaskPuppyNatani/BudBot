@@ -74,8 +74,11 @@ ever exposed through a future admin surface.
 
 API keys use `SecretStr` while loading settings and are kept out of prompts,
 responses, and normalized exceptions. M7 does not store tenant-specific credentials
-in database columns. M9 owns any authenticated admin configuration; durable secret
-references/encryption are deferred.
+in database columns. M9A provides authenticated admin sessions and business
+permissions but stores no per-business provider configuration or credentials.
+M9B will need a durable secret-reference/encryption boundary for tenant-specific
+provider credentials, including businesses that use their own OpenRouter keys.
+No provider setup GUI or credential storage is part of M9A.
 
 ### Tool and failure behavior
 

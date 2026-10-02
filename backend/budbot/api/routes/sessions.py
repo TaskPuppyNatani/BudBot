@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from budbot.api.dependencies import get_session, get_tenant_context
@@ -15,7 +15,9 @@ from budbot.schemas.session import (
     SessionAgeGateRead,
     SessionLocationUpdate,
 )
+from budbot.schemas.widget import WidgetBootstrapRead
 from budbot.services.session_service import SessionService
+from budbot.services.widget_service import WidgetService
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -48,6 +50,19 @@ async def get_customer_session(
     tenant: Tenant,
 ) -> object:
     return await _service(request, session, tenant).get(session_id)
+
+
+@router.get("/{session_id}/widget", response_model=WidgetBootstrapRead)
+async def get_customer_widget(
+    session_id: UUID,
+    response: Response,
+    session: Session,
+    tenant: Tenant,
+) -> WidgetBootstrapRead:
+    """Return only customer presentation fields for a live same-tenant session."""
+
+    response.headers["Cache-Control"] = "no-store"
+    return await WidgetService(session, tenant).get(session_id)
 
 
 @router.patch("/{session_id}/location", response_model=CustomerSessionRead)

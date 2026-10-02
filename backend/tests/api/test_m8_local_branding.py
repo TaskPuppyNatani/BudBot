@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from budbot.api.dependencies import get_session
 from budbot.core.config import Settings
 from budbot.main import create_app
+from conftest import TEST_OWNER_EMAIL, TEST_OWNER_PASSWORD, seed_owner
 
 
 @pytest.fixture
@@ -27,7 +28,12 @@ async def local_branding_client(
     application: FastAPI = create_app(local_settings)
 
     async def override_session() -> AsyncIterator[AsyncSession]:
-        yield db_session
+        try:
+            yield db_session
+            await db_session.commit()
+        except Exception:
+            await db_session.rollback()
+            raise
 
     application.dependency_overrides[get_session] = override_session
     async with application.router.lifespan_context(application):
@@ -35,6 +41,13 @@ async def local_branding_client(
             transport=ASGITransport(app=application),
             base_url="http://127.0.0.1:8000",
         ) as client:
+            await seed_owner(db_session)
+            login = await client.post(
+                "/api/v1/auth/login",
+                json={"email": TEST_OWNER_EMAIL, "password": TEST_OWNER_PASSWORD},
+            )
+            assert login.status_code == 200, login.text
+            client.headers["X-CSRF-Token"] = login.json()["csrf_token"]
             yield client
     application.dependency_overrides.clear()
 
@@ -182,7 +195,9 @@ async def test_local_branding_rejects_cross_tenant_and_nonlocal_requests(
         headers=_headers(second_id),
         json={"display_name": "Unauthorized rename"},
     )
-    assert cross_tenant.status_code == 404
+    # The signed-in owner has memberships in both businesses; the old tenant
+    # selector neither grants nor denies access.
+    assert cross_tenant.status_code == 200
 
     foreign_preview = await client.get(
         f"/api/v1/local/businesses/{first_id}/assets/0123456789abcdef0123456789abcdef.png/preview",
@@ -195,7 +210,8 @@ async def test_local_branding_rejects_cross_tenant_and_nonlocal_requests(
 
     listing = await client.get("/api/v1/local/businesses")
     assert listing.status_code == 200
-    assert {item["id"] for item in listing.json()} == {first_id, second_id}
+    listed_ids = {item["id"] for item in listing.json()}
+    assert {first_id, second_id} <= listed_ids
 
     deactivated = await client.patch(
         f"/api/v1/businesses/{second_id}",
@@ -204,7 +220,7 @@ async def test_local_branding_rejects_cross_tenant_and_nonlocal_requests(
     )
     assert deactivated.status_code == 200
     active_listing = await client.get("/api/v1/local/businesses")
-    assert [item["id"] for item in active_listing.json()] == [first_id]
+    assert second_id not in {item["id"] for item in active_listing.json()}
 
     cross_origin = await client.get(
         "/api/v1/local/businesses",
@@ -236,6 +252,29 @@ async def test_local_branding_rejects_invalid_image_and_null_required_names(
         json={"display_name": None},
     )
     assert null_name.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_local_branding_admin_routes_require_a_session_not_tenant_header(
+    local_branding_client: AsyncClient,
+) -> None:
+    client = local_branding_client
+    owner_business = (await client.get("/api/v1/auth/me")).json()["businesses"][0]
+    business_id = owner_business["business_id"]
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
+
+    anonymous_list = await client.get(
+        "/api/v1/local/businesses",
+        headers={"X-BudBot-Business-ID": business_id},
+    )
+    assert anonymous_list.status_code == 401
+    anonymous_write = await client.put(
+        f"/api/v1/local/businesses/{business_id}/branding",
+        headers={"X-BudBot-Business-ID": business_id},
+        json={"display_name": "Unauthenticated"},
+    )
+    assert anonymous_write.status_code == 401
 
 
 def test_local_branding_routes_are_not_mounted_outside_development(settings: Settings) -> None:

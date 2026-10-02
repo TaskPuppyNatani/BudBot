@@ -25,3 +25,29 @@ def test_invalid_environment_fails_clearly() -> None:
             environment="staging",
             database_url="postgresql+asyncpg://user:pass@localhost/db",
         )
+
+
+def test_production_requires_a_dedicated_rate_limit_hmac_key() -> None:
+    with pytest.raises(ValidationError, match="BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            database_url="postgresql+asyncpg://user:pass@localhost/db",
+        )
+
+    with pytest.raises(ValidationError, match="BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            database_url="postgresql+asyncpg://user:pass@localhost/db",
+            admin_login_rate_limit_key="too-short",
+        )
+
+    configured = Settings(
+        _env_file=None,
+        environment="production",
+        database_url="postgresql+asyncpg://user:pass@localhost/db",
+        admin_login_rate_limit_key="x" * 32,
+    )
+    assert configured.admin_login_rate_limit_key is not None
+    assert configured.admin_login_rate_limit_key.get_secret_value() == "x" * 32

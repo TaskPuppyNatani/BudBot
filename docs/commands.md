@@ -350,10 +350,11 @@ executable, visible in help, or autocomplete options. Unknown and unavailable
 commands fail closed.
 
 Customer command execution and autocomplete use the existing tenant and customer
-session boundaries. The bounded M4 HTTP API does not expose admin execution because
-production authentication does not exist yet. Admin command contexts and permission
-evaluation are explicit framework inputs for later authenticated integration; the
-development tenant header is not authentication.
+session boundaries. The bounded M4 HTTP API remains customer-only. M9A adds
+authentication and permission checks to business-management APIs, but does not yet
+expose admin command execution. Admin command contexts and permission evaluation
+remain explicit inputs for the M9B integration; the development tenant header is
+not authentication.
 
 Customer feature requirements resolve from persisted business flags after live
 tenant/session validation; compliance requirements delegate to the M3

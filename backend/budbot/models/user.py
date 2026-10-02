@@ -19,6 +19,7 @@ class UserAccount(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(200))
+    password_hash: Mapped[str | None] = mapped_column(String(255))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     memberships: Mapped[list["BusinessMembership"]] = relationship(

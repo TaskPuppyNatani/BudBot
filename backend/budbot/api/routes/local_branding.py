@@ -10,16 +10,23 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import Field, model_validator
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from budbot.api.dependencies import get_session, get_tenant_context
-from budbot.core.tenancy import TenantContext
+from budbot.api.dependencies import (
+    AdminAccess,
+    AdminPrincipal,
+    get_current_admin,
+    get_session,
+    list_authorized_businesses,
+    require_business_permission,
+)
+from budbot.core.permissions import AdminPermission
 from budbot.models.business import Business
 from budbot.schemas.assistant import AssistantRead, AssistantUpdate
 from budbot.schemas.business import BusinessRead, BusinessUpdate
 from budbot.schemas.common import DomainSchema, HexColor, Name, ShortText
 from budbot.services.assistant_service import AssistantService
+from budbot.services.audit_service import record_audit_event
 from budbot.services.business_service import BusinessService
 from budbot.services.local_asset_service import (
     MAX_IMAGE_BYTES,
@@ -29,7 +36,14 @@ from budbot.services.local_asset_service import (
 
 router = APIRouter(prefix="/api/v1/local", tags=["local development branding"])
 Session = Annotated[AsyncSession, Depends(get_session)]
-Tenant = Annotated[TenantContext, Depends(get_tenant_context)]
+Principal = Annotated[AdminPrincipal, Depends(get_current_admin)]
+ReadAccess = Annotated[
+    AdminAccess, Depends(require_business_permission("branding.read"))
+]
+WriteAccess = Annotated[
+    AdminAccess,
+    Depends(require_business_permission("branding.write", csrf=True)),
+]
 MAX_ENCODED_IMAGE_CHARS = ((MAX_IMAGE_BYTES + 2) // 3) * 4
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -106,17 +120,15 @@ def _decode_image(upload: EncodedImage) -> bytes:
 async def list_local_businesses(
     request: Request,
     session: Session,
+    principal: Principal,
 ) -> list[Business]:
-    """List active local tenants for the Control Center's business switcher."""
+    """List only active tenants covered by the signed-in user's membership."""
 
     require_local_development(request)
-    result = await session.scalars(
-        select(Business)
-        .where(Business.active.is_(True))
-        .order_by(Business.display_name, Business.id)
-        .limit(200)
+    authorized = await list_authorized_businesses(
+        session, principal.user_id, AdminPermission.BRANDING_READ.value
     )
-    return list(result.all())
+    return [business for business, _membership in authorized[:200]]
 
 
 @router.get("/businesses/{business_id}/assets/{filename}/preview")
@@ -124,12 +136,12 @@ async def render_local_asset_preview(
     business_id: UUID,
     filename: str,
     request: Request,
-    tenant: Tenant,
+    access: ReadAccess,
 ) -> Response:
     """Render an in-memory PNG for the Tk Control Center without storing a copy."""
 
     require_local_development(request)
-    tenant.require_business(business_id)
+    access.tenant.require_business(business_id)
     store = LocalAssetStore(request.app.state.settings.local_assets_dir)
     reference = f"/local-assets/{business_id}/{filename}"
     try:
@@ -152,15 +164,15 @@ async def save_local_branding(
     payload: LocalBrandingUpdate,
     request: Request,
     session: Session,
-    tenant: Tenant,
+    access: WriteAccess,
 ) -> dict[str, dict[str, object]]:
     """Persist one tenant's supported customer-brand fields and local image assets."""
 
     require_local_development(request)
-    tenant.require_business(business_id)
+    access.tenant.require_business(business_id)
     business_service = BusinessService(session)
-    assistant_service = AssistantService(session, tenant)
-    business = await business_service.get(tenant, business_id)
+    assistant_service = AssistantService(session, access.tenant)
+    business = await business_service.get(access.tenant, business_id)
     assistant = await assistant_service.get(business_id)
     store = LocalAssetStore(request.app.state.settings.local_assets_dir)
     created_references: list[str] = []
@@ -200,12 +212,21 @@ async def save_local_branding(
             assistant_changes["avatar_reference"] = None
         if business_changes:
             business = await business_service.update(
-                tenant, business_id, BusinessUpdate(**business_changes)
+                access.tenant, business_id, BusinessUpdate(**business_changes)
             )
         if assistant_changes:
             assistant = await assistant_service.update(
                 business_id, AssistantUpdate(**assistant_changes)
             )
+        await record_audit_event(
+            session,
+            "admin.branding.saved",
+            actor_user_id=access.user_id,
+            business_id=business_id,
+            resource_type="branding",
+            resource_id=business_id,
+            details={"changed_fields": ",".join(sorted(payload.model_fields_set))},
+        )
         await session.commit()
     except Exception:
         await session.rollback()

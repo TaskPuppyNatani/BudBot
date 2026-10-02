@@ -19,6 +19,33 @@ Configuration is divided into:
 
 Secrets are not ordinary configuration.
 
+## Administrative authentication
+
+M9A uses the existing account and membership tables for administrative identity.
+Runtime settings include:
+
+```text
+BUDBOT_ADMIN_SESSION_TTL_SECONDS       default 28800; maximum 86400
+BUDBOT_ADMIN_LOGIN_FAILURE_LIMIT       default 5 attempts
+BUDBOT_ADMIN_LOGIN_WINDOW_SECONDS      default 900
+BUDBOT_ADMIN_LOGIN_LOCKOUT_SECONDS     default 900
+BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY      required in production; at least 32 bytes
+```
+
+Login throttling uses separate HMAC digests for normalized email and direct peer
+IP. The backend does not trust `X-Forwarded-For`; without a trusted-proxy
+contract, throttling uses the direct connection address. Development and tests
+may omit the key; the process generates a random development-only key in memory.
+Restarting the process clears the effective identity of those rate-limit
+buckets. Production must supply a unique random key, such as one generated with
+`openssl rand -hex 32`; keep it in the deployment's secret store and do not
+commit it. Changing the production key clears the effective identity of
+existing rate-limit buckets.
+
+Admin sessions use an opaque host-only cookie with server-side revocation.
+Cookie-authenticated unsafe requests require `X-CSRF-Token`. The business-ID
+header does not authorize admin requests.
+
 ## Business configuration
 
 V1 business fields should include at least:
@@ -244,9 +271,10 @@ Provider endpoints and credentials are trusted server settings. Customer chat
 payloads cannot override provider, model, harness, base URL, or API key. Never put
 credentials in ordinary business rows, prompts, logs, or committed example files.
 M7 has no per-business or per-location AI overrides and adds no encrypted secret
-storage. A future authenticated admin path must validate endpoint destinations
-against SSRF risks before exposing operator-configurable URLs. M9 owns admin
-configuration; resolution currently uses server-level defaults only.
+storage. M9A provides authenticated identity and permission foundations but does
+not yet expose provider configuration. M9B must validate endpoint destinations
+against SSRF risks before exposing operator-configurable URLs; resolution currently
+uses server-level defaults only.
 
 ## Compliance configuration
 

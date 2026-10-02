@@ -64,6 +64,9 @@ async def _seed(db_session, *, name: str = "API Shop"):
     customer_session = await SessionService(db_session, tenant).create(
         CustomerSessionCreate(selected_location_id=location.id)
     )
+    # Persist fixture data before requests that intentionally raise HTTP errors;
+    # the production request dependency correctly rolls back failed transactions.
+    await db_session.commit()
     return tenant, business, location, customer_session
 
 
@@ -236,11 +239,12 @@ async def test_wrong_tenant_and_expired_sessions_fail_before_provider_call(
     db_session,
 ) -> None:
     tenant, _business, _location, customer_session = await _seed(db_session)
+    customer_session_id = customer_session.id
     provider = _install_mock_runtime(application, _response(content="safe"))
     wrong_tenant = await m2_client.post(
         "/api/v1/chat",
         headers={"X-BudBot-Business-ID": str(uuid4())},
-        json={"session_id": str(customer_session.id), "message": "Hello"},
+        json={"session_id": str(customer_session_id), "message": "Hello"},
     )
     customer_session.expires_at = datetime.now(UTC) - timedelta(minutes=1)
     await db_session.flush()
@@ -262,6 +266,7 @@ async def test_ai_provider_outage_does_not_disable_commands_health_or_readiness(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tenant, _business, _location, customer_session = await _seed(db_session)
+    customer_session_id = customer_session.id
     provider = _install_mock_runtime(application)
 
     async def ready_without_external_ai(_timeout: float) -> None:
@@ -271,12 +276,12 @@ async def test_ai_provider_outage_does_not_disable_commands_health_or_readiness(
     chat = await m2_client.post(
         "/api/v1/chat",
         headers={"X-BudBot-Business-ID": str(tenant.business_id)},
-        json={"session_id": str(customer_session.id), "message": "Hello"},
+        json={"session_id": str(customer_session_id), "message": "Hello"},
     )
     command = await m2_client.post(
         "/api/v1/commands/execute",
         headers={"X-BudBot-Business-ID": str(tenant.business_id)},
-        json={"session_id": str(customer_session.id), "input": "/hours"},
+        json={"session_id": str(customer_session_id), "input": "/hours"},
     )
     health = await m2_client.get("/health")
     ready = await m2_client.get("/ready")

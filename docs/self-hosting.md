@@ -51,6 +51,33 @@ docker compose up -d
 
 followed by documented initialization/migrations.
 
+### First owner account
+
+Apply Alembic migrations before initializing an owner. The development Compose
+backend runs `alembic upgrade head` before serving; in another deployment, run
+that migration before owner setup. There is no default password and no public
+owner-registration endpoint.
+
+For the M8 Control Center workflow, start BudBot once so its local demo business
+is created, then initialize the first owner and select that business:
+
+```bash
+docker compose -f docker-compose.dev.yml --project-name budbot exec backend python -m budbot.admin setup-owner
+```
+
+The command lists active businesses and prompts for exactly one tenant, owner
+email/display name, and a new password twice using hidden terminal input. It
+persists only the Argon2id password hash and grants membership only in the
+selected business. On a genuinely empty installation, it prompts for a first
+business name and creates that business. A database singleton guard makes a
+second or concurrent setup attempt fail without replacing the first owner.
+
+Production deployments must set `BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY` to a unique
+secret of at least 32 bytes. Generate one with `openssl rand -hex 32`, keep it
+outside Git, and use the same value across backend instances. Production startup
+rejects a missing or too-short key. Do not pass owner passwords as command-line
+arguments or store them in Compose environment variables.
+
 The production compose stack should include health checks and persistent database storage.
 
 A separate development compose file may expose development conveniences.
@@ -218,8 +245,8 @@ A fresh machine with Docker support should be able to:
 1. clone/copy BudBot;
 2. configure `.env`;
 3. start PostgreSQL and BudBot via Compose;
-4. apply/init migrations;
-5. create a demo business;
+4. apply migrations and initialize the first owner with the local CLI;
+5. create or select one business for that owner;
 6. create multiple locations;
 7. open the admin UI;
 8. open/embed the widget;

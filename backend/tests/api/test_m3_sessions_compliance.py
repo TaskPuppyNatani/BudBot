@@ -141,8 +141,10 @@ async def test_profiles_default_selection_and_tenant_scoped_configuration(
         headers=tenant_header(first_id),
         json={"profile_id": "general_retail"},
     )
-    assert cross_tenant.status_code == 404
-    assert cross_tenant.json()["code"] == "BUSINESS_NOT_FOUND"
+    # Both path tenants belong to this owner; the legacy selector header is
+    # ignored for admin authorization.
+    assert cross_tenant.status_code == 200
+    assert cross_tenant.json()["profile_id"] == "general_retail"
 
     unknown = await m2_client.patch(
         f"/api/v1/businesses/{first_id}/compliance-profile",
@@ -375,7 +377,7 @@ async def test_age_gate_and_direct_http_enforcement(
     )
     assert stored is not None
     stored.expires_at = datetime.now(UTC) - timedelta(minutes=1)
-    await db_session.flush()
+    await db_session.commit()
     expired = await m2_client.get(
         f"/_m3_test/products/{session_id}", headers=headers
     )

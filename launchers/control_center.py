@@ -17,10 +17,11 @@ import sys
 import threading
 import tkinter as tk
 import traceback
-from tkinter import colorchooser, filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 import webbrowser
 
 from branding_client import (
+    BrandingAuthenticationRequired,
     BrandingClientError,
     LocalBrandingClient,
     encode_image_file,
@@ -59,7 +60,18 @@ DEFAULT_WINDOW_SIZE = (1280, 860)
 MIN_COMFORTABLE_SIZE = (1180, 780)
 MAX_EVENTS_PER_POLL = 100
 TERMINAL_EVENT_KINDS = frozenset(
-    {"detected", "detection_error", "service_done", "business_loaded", "branding_saved", "branding_error"}
+    {
+        "detected",
+        "detection_error",
+        "service_done",
+        "business_loaded",
+        "branding_saved",
+        "branding_error",
+        "auth_required",
+        "auth_complete",
+        "auth_failed",
+        "auth_cancelled",
+    }
 )
 
 
@@ -946,6 +958,128 @@ class BudBotControlCenter(tk.Tk):
             self._log_lifecycle(f"could not start {target.__name__}: {exc}\n{traceback.format_exc()}")
             self.events.put((failure_kind, failure_payload(exc)))
 
+    def _request_admin_login(
+        self, pending: dict[str, object], attempt: int = 1
+    ) -> None:
+        if self._close_after_operation or self._window_closed:
+            self.events.put(("auth_cancelled", pending))
+            return
+        email = simpledialog.askstring(
+            "Sign in to BudBot",
+            "BudBot account email for authorized business branding:",
+            parent=self,
+        )
+        if email is None or not email.strip():
+            self.events.put(("auth_cancelled", pending))
+            return
+        password = simpledialog.askstring(
+            "Sign in to BudBot",
+            "Password:",
+            show="*",
+            parent=self,
+        )
+        if password is None:
+            self.events.put(("auth_cancelled", pending))
+            return
+        self._dispatch_worker(
+            self._admin_login_worker,
+            (email.strip(), password, pending, attempt),
+            "auth_failed",
+            lambda exc: {
+                "pending": pending,
+                "attempt": attempt,
+                "message": f"Could not start sign-in: {exc}",
+            },
+        )
+
+    def _admin_login_worker(
+        self,
+        email: str,
+        password: str,
+        pending: dict[str, object],
+        attempt: int,
+    ) -> None:
+        try:
+            self.branding_client.login(email, password)
+            self.events.put(("auth_complete", pending))
+            self._log_lifecycle("local branding sign-in succeeded")
+        except Exception as exc:
+            self.events.put(
+                (
+                    "auth_failed",
+                    {
+                        "pending": pending,
+                        "attempt": attempt,
+                        "message": str(exc),
+                    },
+                )
+            )
+            self._log_lifecycle("local branding sign-in failed")
+        finally:
+            email = ""
+            password = ""
+
+    def _resume_authenticated_operation(self, pending: dict[str, object]) -> None:
+        operation = pending.get("operation")
+        if operation == "service":
+            self._dispatch_worker(
+                self._finish_started_service,
+                (
+                    str(pending["action"]),
+                    str(pending["url"]),
+                    str(pending["business_id"]),
+                ),
+                "service_done",
+                lambda exc: {
+                    "state": "Error",
+                    "action": str(pending["action"]),
+                    "message": f"BudBot could not load authorized branding: {exc}",
+                },
+            )
+        elif operation == "detection":
+            self._dispatch_worker(
+                self._finish_detected_stack,
+                (str(pending["url"]), str(pending["business_id"])),
+                "detection_error",
+                lambda exc: f"Could not load authorized business branding: {exc}",
+            )
+        elif operation == "branding":
+            self._dispatch_worker(
+                self._branding_worker,
+                (
+                    str(pending["action"]),
+                    str(pending["business_id"]),
+                    pending.get("changes"),
+                ),
+                "branding_error",
+                lambda exc: f"Could not restart the branding operation: {exc}",
+            )
+
+    def _finish_auth_unavailable(
+        self, pending: dict[str, object], message: str
+    ) -> None:
+        operation = pending.get("operation")
+        if operation in {"service", "detection"}:
+            self.business_id = None
+            self.preview_url = None
+            self._set_status(
+                "Running",
+                "BudBot is running, but branding sign-in was not completed. "
+                "Run the owner setup command or sign in again; Stop and Restart remain available.",
+            )
+        elif operation == "branding" and pending.get("action") == "load":
+            self.business_id = None
+            self._set_status(
+                "Running",
+                "BudBot is running, but this business could not be loaded. Sign in "
+                "with an authorized owner or administrator, then select the business again.",
+            )
+        self.busy = False
+        self.progress.stop()
+        self._refresh_buttons()
+        if not self._close_after_operation and not self._window_closed:
+            messagebox.showerror("BudBot sign-in required", message, parent=self)
+
     def _handle_event_exception(self, kind: str, exc: Exception, tb=None) -> None:
         """Turn a Tk event-handler failure into a visible, recoverable state."""
         if kind in TERMINAL_EVENT_KINDS:
@@ -990,14 +1124,115 @@ class BudBotControlCenter(tk.Tk):
         """Make unexpected Tk callbacks visible and provide an operational recovery path."""
         self._handle_event_exception("Tk callback", val, tb)
 
-    def _load_business_data(self, business_id: str) -> tuple[list[dict[str, str]], dict[str, dict[str, object]], bytes, bytes]:
+    def _load_business_data(
+        self, business_id: str
+    ) -> tuple[str, list[dict[str, str]], dict[str, dict[str, object]], bytes, bytes]:
         businesses = self.branding_client.list_businesses()
+        business_id = self._authorized_business_id(businesses, business_id)
         branding = self.branding_client.load(business_id)
         business = branding["business"]
         assistant = branding["assistant"]
         logo = self.branding_client.load_asset_preview(business.get("logo_reference"), business_id) if business.get("logo_reference") else b""
         avatar = self.branding_client.load_asset_preview(assistant.get("avatar_reference"), business_id) if assistant.get("avatar_reference") else b""
-        return businesses, branding, logo, avatar
+        return business_id, businesses, branding, logo, avatar
+
+    @staticmethod
+    def _authorized_business_id(
+        businesses: list[dict[str, str]], preferred_id: str
+    ) -> str:
+        available_ids = {item["id"] for item in businesses}
+        if preferred_id in available_ids:
+            return preferred_id
+        if not businesses:
+            raise BrandingClientError(
+                "No business membership is available. Run the first-owner setup "
+                "command, then sign in again."
+            )
+        return businesses[0]["id"]
+
+    def _finish_started_service(
+        self, action: str, url: str, preferred_business_id: str
+    ) -> None:
+        try:
+            business_id, businesses, branding, logo, avatar = self._load_business_data(
+                preferred_business_id
+            )
+            preview = f"http://127.0.0.1:8000/widget/?business_id={business_id}"
+            self.controller.preview_file.write_text(preview + "\n", encoding="utf-8")
+            saved_selection = self.controller.selected_business_file
+            saved_selection.parent.mkdir(parents=True, exist_ok=True)
+            saved_selection.write_text(business_id + "\n", encoding="utf-8")
+            self.events.put(
+                (
+                    "service_done",
+                    {
+                        "state": "Running",
+                        "action": action,
+                        "url": preview,
+                        "business_id": business_id,
+                        "businesses": businesses,
+                        "branding": branding,
+                        "logo": logo,
+                        "avatar": avatar,
+                    },
+                )
+            )
+            self._log_lifecycle(
+                f"{action} worker queued service_done Running for authorized business {business_id}"
+            )
+        except BrandingAuthenticationRequired:
+            self.events.put(
+                (
+                    "auth_required",
+                    {
+                        "operation": "service",
+                        "action": action,
+                        "url": url,
+                        "business_id": preferred_business_id,
+                    },
+                )
+            )
+        except (BrandingClientError, OSError, ValueError) as exc:
+            self._log_lifecycle(
+                f"{action} startup completed but branding load failed: {exc}\n{traceback.format_exc()}"
+            )
+            self.events.put(
+                (
+                    "service_done",
+                    {
+                        "state": "Error",
+                        "action": action,
+                        "message": f"BudBot may be running, but authorized business branding could not be loaded: {exc}",
+                    },
+                )
+            )
+
+    def _finish_detected_stack(self, url: str, preferred_business_id: str) -> None:
+        business_id, businesses, branding, logo, avatar = self._load_business_data(
+            preferred_business_id
+        )
+        if business_id != preferred_business_id:
+            url = f"http://127.0.0.1:8000/widget/?business_id={business_id}"
+            self.controller.preview_file.write_text(url + "\n", encoding="utf-8")
+            self.controller.selected_business_file.write_text(
+                business_id + "\n", encoding="utf-8"
+            )
+        self.events.put(
+            (
+                "detected",
+                {
+                    "url": url,
+                    "business_id": business_id,
+                    "businesses": businesses,
+                    "branding": branding,
+                    "logo": logo,
+                    "avatar": avatar,
+                },
+            )
+        )
+        self._log_lifecycle(
+            f"existing-stack detection queued authorized business {business_id}"
+        )
 
     def _service_worker(self, action: str) -> None:
         self._log_lifecycle(f"{action} worker started")
@@ -1014,18 +1249,8 @@ class BudBotControlCenter(tk.Tk):
             business_id = saved_selection.read_text(encoding="utf-8").strip() if saved_selection.exists() else demo_id
             if not self.controller._valid_uuid(business_id):
                 business_id = demo_id
-            businesses, branding, logo, avatar = self._load_business_data(business_id)
-            available_ids = {item["id"] for item in businesses}
-            if business_id not in available_ids:
-                business_id = demo_id
-                businesses, branding, logo, avatar = self._load_business_data(business_id)
-            preview = f"http://127.0.0.1:8000/widget/?business_id={business_id}"
-            self.controller.preview_file.write_text(preview + "\n", encoding="utf-8")
-            saved_selection.parent.mkdir(parents=True, exist_ok=True)
-            saved_selection.write_text(business_id + "\n", encoding="utf-8")
-            self.events.put(("service_done", {"state": "Running", "action": action, "url": preview, "business_id": business_id, "businesses": businesses, "branding": branding, "logo": logo, "avatar": avatar}))
-            self._log_lifecycle(f"{action} worker queued service_done Running for business {business_id}")
-        except (BudBotServiceError, BrandingClientError, OSError, ValueError) as exc:
+            self._finish_started_service(action, url, business_id)
+        except (BudBotServiceError, OSError, ValueError) as exc:
             self._log_lifecycle(f"{action} worker failed: {exc}\n{traceback.format_exc()}")
             self.events.put(("service_done", {"state": "Error", "action": action, "message": f"BudBot operation failed: {exc}"}))
         except Exception as exc:
@@ -1056,17 +1281,18 @@ class BudBotControlCenter(tk.Tk):
                 self.events.put(("detected", None))
                 return
             business_id = self.controller._business_id_from_url(url)
-            businesses = self.branding_client.list_businesses()
-            if business_id not in {item["id"] for item in businesses}:
-                if not businesses:
-                    raise BrandingClientError("No active business is available for preview.")
-                business_id = businesses[0]["id"]
-                url = f"http://127.0.0.1:8000/widget/?business_id={business_id}"
-                self.controller.preview_file.write_text(url + "\n", encoding="utf-8")
-                self.controller.selected_business_file.write_text(business_id + "\n", encoding="utf-8")
-            businesses, branding, logo, avatar = self._load_business_data(business_id)
-            self.events.put(("detected", {"url": url, "business_id": business_id, "businesses": businesses, "branding": branding, "logo": logo, "avatar": avatar}))
-            self._log_lifecycle(f"existing-stack detection queued detected for business {business_id}")
+            self._finish_detected_stack(url, business_id)
+        except BrandingAuthenticationRequired:
+            self.events.put(
+                (
+                    "auth_required",
+                    {
+                        "operation": "detection",
+                        "url": url,
+                        "business_id": business_id,
+                    },
+                )
+            )
         except (BudBotServiceError, BrandingClientError, OSError, ValueError) as exc:
             self._log_lifecycle(f"existing-stack detection failed: {exc}\n{traceback.format_exc()}")
             self.events.put(("detection_error", f"Could not reconnect to the running BudBot service: {exc}"))
@@ -1124,8 +1350,20 @@ class BudBotControlCenter(tk.Tk):
                 avatar = self.branding_client.load_asset_preview(avatar_ref, business_id) if avatar_ref else b""
                 self.events.put(("branding_saved", {"branding": branding, "logo": logo, "avatar": avatar}))
             else:
-                businesses, branding, logo, avatar = self._load_business_data(business_id)
-                self.events.put(("business_loaded", {"business_id": business_id, "businesses": businesses, "branding": branding, "logo": logo, "avatar": avatar}))
+                authorized_id, businesses, branding, logo, avatar = self._load_business_data(business_id)
+                self.events.put(("business_loaded", {"business_id": authorized_id, "businesses": businesses, "branding": branding, "logo": logo, "avatar": avatar}))
+        except BrandingAuthenticationRequired:
+            self.events.put(
+                (
+                    "auth_required",
+                    {
+                        "operation": "branding",
+                        "action": action,
+                        "business_id": business_id,
+                        "changes": changes,
+                    },
+                )
+            )
         except (BrandingClientError, OSError, ValueError) as exc:
             self.events.put(("branding_error", str(exc)))
         except Exception as exc:
@@ -1451,6 +1689,35 @@ class BudBotControlCenter(tk.Tk):
             elif message.lower().startswith("stopping"):
                 self.status_label.configure(text="Stopping", foreground=STATE_COLORS["Stopping"])
                 self.status_dot.itemconfigure(self.status_circle, fill=STATE_COLORS["Stopping"])
+        elif kind == "auth_required":
+            pending = dict(payload)
+            if pending.get("operation") in {"service", "detection"}:
+                self._set_status(
+                    "Running",
+                    "BudBot is running. Sign in to load the branding for a business you can manage.",
+                )
+                self.business_id = None
+                self.preview_url = None
+                self._refresh_buttons()
+            self._request_admin_login(pending)
+        elif kind == "auth_complete":
+            self._resume_authenticated_operation(dict(payload))
+        elif kind == "auth_failed":
+            data = dict(payload)
+            pending = dict(data["pending"])
+            message = str(data.get("message", "BudBot sign-in failed."))
+            attempt = int(data.get("attempt", 1))
+            if not self._close_after_operation and attempt < 3:
+                messagebox.showerror("BudBot sign-in failed", message, parent=self)
+                self._request_admin_login(pending, attempt + 1)
+            else:
+                self._finish_auth_unavailable(pending, message)
+        elif kind == "auth_cancelled":
+            self._finish_auth_unavailable(
+                dict(payload),
+                "Sign-in was canceled. Run the local owner setup command first if "
+                "no account exists, then try again.",
+            )
         elif kind == "detected":
             self.busy = False
             self.progress.stop()

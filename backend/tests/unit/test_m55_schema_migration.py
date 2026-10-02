@@ -78,10 +78,10 @@ def test_region_codes_normalize_but_do_not_guess_from_display_region() -> None:
         )
 
 
-def test_alembic_has_exactly_one_head_after_m6() -> None:
+def test_alembic_has_exactly_one_head_after_m9a() -> None:
     backend_dir = Path(__file__).resolve().parents[2]
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     assert ScriptDirectory.from_config(config).get_heads() == [
-        "0006_m6_provider_neutral_catalog"
+        "0007_m9a_auth_admin"
     ]

@@ -6,8 +6,9 @@ import base64
 import json
 from pathlib import Path
 import re
+from http.cookiejar import CookieJar
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 BASE_URL = "http://127.0.0.1:8000"
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
@@ -19,6 +20,10 @@ _ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 class BrandingClientError(RuntimeError):
     """An actionable error from local branding operations."""
+
+
+class BrandingAuthenticationRequired(BrandingClientError):
+    """Raised when the backend requires an owner sign-in."""
 
 
 def validate_local_asset_reference(reference: str | None) -> str | None:
@@ -53,22 +58,41 @@ class LocalBrandingClient:
     def __init__(self, base_url: str = BASE_URL, timeout: float = 8.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.cookie_jar = CookieJar()
+        self.opener = build_opener(HTTPCookieProcessor(self.cookie_jar))
+        self.csrf_token: str | None = None
 
-    def _request(self, path: str, business_id: str | None = None, payload: object = None):
+    def _request(
+        self,
+        path: str,
+        business_id: str | None = None,
+        payload: object = None,
+        *,
+        method: str | None = None,
+    ):
         headers = {"Accept": "application/json"}
-        if business_id:
-            headers["X-BudBot-Business-ID"] = business_id
         data = None
-        method = "GET"
+        request_method = method or "GET"
         if payload is not None:
             headers["Content-Type"] = "application/json"
             data = json.dumps(payload).encode("utf-8")
-            method = "PUT"
-        request = Request(self.base_url + path, data=data, headers=headers, method=method)
+            if method is None:
+                request_method = "PUT"
+        if request_method not in {"GET", "HEAD", "OPTIONS"} and self.csrf_token:
+            headers["X-CSRF-Token"] = self.csrf_token
+        request = Request(
+            self.base_url + path, data=data, headers=headers, method=request_method
+        )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with self.opener.open(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
+            if exc.code == 401:
+                self.cookie_jar.clear()
+                self.csrf_token = None
+                raise BrandingAuthenticationRequired(
+                    "Sign in to BudBot to access business branding."
+                ) from None
             detail = ""
             try:
                 body = json.loads(exc.read().decode("utf-8"))
@@ -94,6 +118,23 @@ class LocalBrandingClient:
         if not isinstance(result, list):
             raise BrandingClientError("BudBot returned an invalid business list.")
         return result
+
+    def login(self, email: str, password: str) -> None:
+        try:
+            result = self._request(
+                "/api/v1/auth/login",
+                payload={"email": email, "password": password},
+                method="POST",
+            )
+        except BrandingAuthenticationRequired:
+            raise BrandingClientError(
+                "The email or password was not accepted. Check the owner setup "
+                "instructions and try again."
+            ) from None
+        csrf_token = result.get("csrf_token") if isinstance(result, dict) else None
+        if not isinstance(csrf_token, str) or not csrf_token:
+            raise BrandingClientError("BudBot returned an invalid sign-in response.")
+        self.csrf_token = csrf_token
 
     def load(self, business_id: str) -> dict[str, dict[str, object]]:
         business = self._request(f"/api/v1/businesses/{business_id}", business_id)
@@ -130,16 +171,21 @@ class LocalBrandingClient:
             f"{self.base_url}/api/v1/local/businesses/{business_id}/assets/{filename}/preview",
             headers={
                 "Accept": "image/png",
-                "X-BudBot-Business-ID": business_id,
             },
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
+            with self.opener.open(request, timeout=self.timeout) as response:
                 payload = response.read(MAX_IMAGE_BYTES + 1)
             if len(payload) > MAX_IMAGE_BYTES:
                 raise BrandingClientError("This local image preview is larger than expected.")
             return payload
         except HTTPError as exc:
+            if exc.code == 401:
+                self.cookie_jar.clear()
+                self.csrf_token = None
+                raise BrandingAuthenticationRequired(
+                    "Sign in to BudBot to access business branding."
+                ) from None
             raise BrandingClientError(
                 f"Could not render the saved local image preview ({exc.code})."
             ) from None

@@ -12,9 +12,13 @@ from budbot.models.business import Business
 from budbot.models.location import Location, LocationHours
 from budbot.models.session import CustomerSession
 from budbot.models.user import BusinessMembership, UserAccount
+from budbot.models.auth import AdminSession, AuthSetupState, AuditEvent, LoginRateLimit
 
 __all__ = [
     "AssistantConfiguration",
+    "AdminSession",
+    "AuthSetupState",
+    "AuditEvent",
     "Business",
     "BusinessMembership",
     "CatalogCategory",
@@ -25,6 +29,7 @@ __all__ = [
     "Location",
     "LocationAssistantOverride",
     "LocationHours",
+    "LoginRateLimit",
     "ProductOffering",
     "UserAccount",
 ]

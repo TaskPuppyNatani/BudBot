@@ -6,7 +6,7 @@ import re
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     customer_session_ttl_seconds: int = Field(
         default=86_400, ge=60, le=2_592_000
     )
+    admin_session_ttl_seconds: int = Field(default=28_800, ge=300, le=86_400)
+    admin_login_failure_limit: int = Field(default=5, ge=3, le=20)
+    admin_login_window_seconds: int = Field(default=900, ge=60, le=86_400)
+    admin_login_lockout_seconds: int = Field(default=900, ge=60, le=86_400)
+    admin_login_rate_limit_key: SecretStr | None = None
     ai_enabled: bool = False
     ai_provider: str = "openai_compatible"
     ai_base_url: str | None = None
@@ -54,6 +59,20 @@ class Settings(BaseSettings):
     ai_capability_structured_output: bool = False
     ai_capability_system_role: bool = True
     ai_capability_reasoning_control: bool = False
+
+    @model_validator(mode="after")
+    def require_rate_limit_key_in_production(self) -> "Settings":
+        if self.environment == "production":
+            key = (
+                self.admin_login_rate_limit_key.get_secret_value()
+                if self.admin_login_rate_limit_key is not None
+                else ""
+            )
+            if len(key.encode("utf-8")) < 32:
+                raise ValueError(
+                    "BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY must contain at least 32 bytes in production"
+                )
+        return self
 
     @field_validator("database_url")
     @classmethod

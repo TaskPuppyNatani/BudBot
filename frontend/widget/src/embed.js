@@ -63,6 +63,7 @@ export class BudBotWidget extends (globalThis.HTMLElement || class {}) {
   async api(path, options = {}) {
     const response = await fetch(`${this.apiBase}${path}`, {
       ...options,
+      credentials: "omit",
       headers: { "Content-Type": "application/json", "X-BudBot-Business-ID": this.businessId, ...(options.headers || {}) },
     });
     if (!response.ok) {
@@ -93,26 +94,13 @@ export class BudBotWidget extends (globalThis.HTMLElement || class {}) {
     // element, so reflect attributes after they have been applied.
     Object.assign(this, widgetBootstrapConfig(this, location.origin));
     if (!this.businessId) throw new Error("Open the widget preview from BudBot Control Center.");
-    const [business, assistant, locations, compliance] = await Promise.all([
-      this.api(`/api/v1/businesses/${this.businessId}`),
-      this.api(`/api/v1/businesses/${this.businessId}/assistant`),
-      this.api(`/api/v1/businesses/${this.businessId}/locations`),
-      this.api(`/api/v1/businesses/${this.businessId}/compliance-profile`),
-    ]);
-    this.business = business;
-    this.compliance = compliance;
-    this.assistant = assistant;
-    this.$(".business-name").textContent = business.display_name;
-    this.$(".business-initial").textContent = (business.display_name || "B").trim().slice(0, 1).toUpperCase();
-    this.$(".business-subtitle").textContent = `Ask ${assistant.display_name} anything`;
-    this.setBusinessLogo(business.logo_reference);
-    this.setBrandColor(assistant.primary_color_override || business.primary_brand_color);
+    this.session = await this.api("/api/v1/sessions", { method: "POST", body: JSON.stringify({}) });
+    const { locations } = await this.loadConfiguration();
     const select = this.$("select.loc");
-    const active = locations.filter((item) => item.active);
-    if (active.length > 1) {
+    if (locations.length > 1) {
       select.hidden = false;
       select.innerHTML = `<option value="">Choose a location…</option>`;
-      for (const item of active) {
+      for (const item of locations) {
         const option = document.createElement("option");
         option.value = item.id;
         option.textContent = item.display_name;
@@ -121,8 +109,22 @@ export class BudBotWidget extends (globalThis.HTMLElement || class {}) {
       select.addEventListener("change", () => this.chooseLocation(select.value).catch((error) => this.fail(error)));
       this.$(".status").textContent = "Choose a location to start chatting.";
     } else {
-      await this.chooseLocation(active[0]?.id || null);
+      await this.chooseLocation(locations[0]?.id || null);
     }
+  }
+
+  async loadConfiguration() {
+    const data = await this.api(`/api/v1/sessions/${this.session.id}/widget`);
+    const { business, assistant, compliance } = data;
+    this.business = business;
+    this.compliance = compliance;
+    this.assistant = assistant;
+    this.$(".business-name").textContent = business.display_name;
+    this.$(".business-initial").textContent = (business.display_name || "B").trim().slice(0, 1).toUpperCase();
+    this.$(".business-subtitle").textContent = `Ask ${assistant.display_name} anything`;
+    this.setBusinessLogo(business.logo_reference);
+    this.setBrandColor(assistant.primary_color || business.primary_brand_color);
+    return data;
   }
 
   async chooseLocation(id) {
@@ -132,11 +134,7 @@ export class BudBotWidget extends (globalThis.HTMLElement || class {}) {
     } else {
       this.session = await this.api("/api/v1/sessions", { method: "POST", body: JSON.stringify({ selected_location_id: id }) });
     }
-    if (id) {
-      this.assistant = await this.api(`/api/v1/businesses/${this.businessId}/locations/${id}/effective-assistant`);
-      this.setBrandColor(this.assistant.primary_color || this.business.primary_brand_color);
-    }
-    this.$(".business-subtitle").textContent = `Ask ${this.assistant.display_name} anything`;
+    await this.loadConfiguration();
     this.commands = await this.api(`/api/v1/commands?session_id=${this.session.id}`);
     if (needsAgeGate(this.compliance, this.session)) this.showGate();
     else this.showChat();

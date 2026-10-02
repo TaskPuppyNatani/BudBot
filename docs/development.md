@@ -311,8 +311,27 @@ Acceptance:
   overrides are preserved;
 - launcher operations preserve existing `.env`, PostgreSQL data, and uploaded assets.
 
-The local branding editor is an operator convenience for this development preview;
-it is not the authenticated M9 admin UI and must not be exposed publicly.
+The local branding editor is an operator convenience for this development preview,
+not the full M9 admin UI. Its API requires an authenticated account with business
+membership and remains development-only and loopback-only.
+
+### M9A - Authentication and administrative authorization
+
+M9A establishes the security boundary for self-hosted business administration:
+
+- Argon2id account password hashes and generic login failures;
+- opaque server-side sessions with expiry, logout/revocation, and CSRF checks;
+- one-time local owner setup protected by a database singleton guard;
+- centralized owner/admin/manager/viewer permission mapping;
+- membership-checked business, location, assistant, compliance, and local branding
+  routes;
+- redacted authentication/admin audit events and independent HMAC login buckets;
+- authenticated Control Center access to its existing branding endpoints.
+
+The customer/widget session and compliance APIs remain public within their
+existing tenant/session scopes. `X-BudBot-Business-ID` is never admin identity.
+M9A does not add membership invitation management, provider credential storage,
+admin command execution, audit browsing, or a dashboard; those are M9B work.
 
 ### M9 - Admin UI and admin commands
 
@@ -482,6 +501,10 @@ Do not silently depend on ORM auto-create behavior for production deployment.
 
 Migration changes should include tests or verification for important upgrade paths.
 
+M9A revision `0007_m9a_auth_admin` adds nullable password hashes for existing
+accounts and creates server-side session, one-time owner-setup, login-throttle,
+and audit tables without replacing existing business or customer data.
+
 ## Logging
 
 Logs should be useful but conservative.
@@ -572,14 +595,16 @@ contracts above:
   SQLAlchemy's UUID type, which maps to native PostgreSQL UUID columns.
 - `user_accounts` and `business_memberships` form an explicit many-to-many
   account/business relationship. Membership carries a bounded role label, but
-  M2 does not assign authorization semantics or implement login.
+  M2 did not assign authorization semantics or implement login; M9A now applies
+  its centralized role map to administrative APIs.
 - Normal tenant-owned queries use `TenantScopedRepository`, initialized with an
   immutable request-level `TenantContext`. Primary-key reads add the business
   predicate automatically and return the same not-found result for missing and
   cross-tenant records.
-- Until authentication is implemented, M2 API routes resolve tenant context
-  from `X-BudBot-Business-ID`. This is a development/test selector, not proof of
-  identity. Business creation is the only unscoped bootstrap route.
+- M2 initially used `X-BudBot-Business-ID` as a development/test tenant
+  selector, not proof of identity. M9A now requires authenticated membership
+  for administrative business paths; business creation requires an active
+  owner and grants that owner membership only in the new business.
 - Each business has one stable assistant configuration. A location may have one
   nullable override row for display name, greeting, fallback message, and
   enabled state. `AssistantService.resolve` is the single inheritance resolver:
@@ -606,10 +631,9 @@ These details describe the bounded M3 implementation without starting M4:
 - `BUDBOT_CUSTOMER_SESSION_TTL_SECONDS` defaults to 86,400 seconds. Expiry is
   checked during session access and capability authorization; no cleanup
   worker is introduced in M3.
-- The temporary `X-BudBot-Business-ID` header remains a development/test
-  tenant selector, not authentication. M3 adds only the minimum profile
-  configuration path needed for development/testing; full authentication and
-  admin UI remain later work.
+- The temporary `X-BudBot-Business-ID` header remains a customer/development
+  tenant selector, not authentication. M9A now authenticates and authorizes
+  admin routes; customer sessions remain independent.
 - The PostgreSQL-only location-selection concurrency test is skipped unless
   `BUDBOT_TEST_POSTGRES_URL` points to an isolated database already migrated
   to Alembic head. SQLite tests do not prove PostgreSQL row-lock behavior.
@@ -629,9 +653,9 @@ These details describe the bounded M3 implementation without starting M4:
 - `POST /api/v1/commands/execute` and `GET /api/v1/commands` are customer-only M4
   surfaces. Both require the temporary tenant header and a live same-tenant customer
   session. They do not create an admin-authentication mechanism.
-- Admin permission state and feature availability are request-scoped inputs designed
-  for future authenticated and persisted providers. Missing admin identity,
-  permissions, features, or compliance approval fails closed.
+- Admin permission state and feature availability remain explicit command
+  executor inputs. M9A authenticates business admin APIs; HTTP admin command
+  execution remains for M9B.
 - Future custom commands are represented only by a safe declarative definition and
   protected-name validation. M4 does not execute arbitrary custom actions, Python,
   shell commands, SQL, providers, or client-selected handlers.

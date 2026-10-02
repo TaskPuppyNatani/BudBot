@@ -227,7 +227,9 @@ async def test_tenant_isolation_blocks_reads_updates_lists_and_resolution(
         f"/api/v1/businesses/{b_id}/assistant",
         headers=tenant_header(a_id),
     )
-    assert cross_assistant.status_code == 404
+    # The owner is a verified member of both path tenants. The stale selector
+    # header does not override or deny that membership-based authorization.
+    assert cross_assistant.status_code == 200
     cross_effective = await m2_client.get(
         f"/api/v1/businesses/{a_id}/locations/{b_location['id']}/effective-assistant",
         headers=tenant_header(a_id),

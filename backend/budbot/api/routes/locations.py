@@ -6,16 +6,22 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from budbot.api.dependencies import get_session, get_tenant_context
-from budbot.core.tenancy import TenantContext
+from budbot.api.dependencies import AdminAccess, get_session, require_business_permission
 from budbot.schemas.location import LocationCreate, LocationRead, LocationUpdate
+from budbot.services.audit_service import record_audit_event
 from budbot.services.location_service import LocationService
 
 router = APIRouter(
     prefix="/api/v1/businesses/{business_id}/locations", tags=["locations"]
 )
 Session = Annotated[AsyncSession, Depends(get_session)]
-Tenant = Annotated[TenantContext, Depends(get_tenant_context)]
+ReadAccess = Annotated[
+    AdminAccess, Depends(require_business_permission("location.read"))
+]
+WriteAccess = Annotated[
+    AdminAccess,
+    Depends(require_business_permission("location.write", csrf=True)),
+]
 
 
 @router.post("", response_model=LocationRead, status_code=status.HTTP_201_CREATED)
@@ -23,20 +29,31 @@ async def create_location(
     business_id: UUID,
     payload: LocationCreate,
     session: Session,
-    tenant: Tenant,
+    access: WriteAccess,
 ) -> object:
-    return await LocationService(session, tenant).create(business_id, payload)
+    location = await LocationService(session, access.tenant).create(
+        business_id, payload
+    )
+    await record_audit_event(
+        session,
+        "admin.location.created",
+        actor_user_id=access.user_id,
+        business_id=business_id,
+        resource_type="location",
+        resource_id=location.id,
+    )
+    return location
 
 
 @router.get("", response_model=list[LocationRead])
 async def list_locations(
     business_id: UUID,
     session: Session,
-    tenant: Tenant,
+    access: ReadAccess,
     include_inactive: Annotated[bool, Query()] = False,
 ) -> object:
-    tenant.require_business(business_id)
-    return await LocationService(session, tenant).list_locations(
+    access.tenant.require_business(business_id)
+    return await LocationService(session, access.tenant).list_locations(
         include_inactive=include_inactive
     )
 
@@ -46,10 +63,10 @@ async def get_location(
     business_id: UUID,
     location_id: UUID,
     session: Session,
-    tenant: Tenant,
+    access: ReadAccess,
 ) -> object:
-    tenant.require_business(business_id)
-    return await LocationService(session, tenant).get(location_id)
+    access.tenant.require_business(business_id)
+    return await LocationService(session, access.tenant).get(location_id)
 
 
 @router.patch("/{location_id}", response_model=LocationRead)
@@ -58,10 +75,22 @@ async def update_location(
     location_id: UUID,
     payload: LocationUpdate,
     session: Session,
-    tenant: Tenant,
+    access: WriteAccess,
 ) -> object:
-    tenant.require_business(business_id)
-    return await LocationService(session, tenant).update(location_id, payload)
+    access.tenant.require_business(business_id)
+    location = await LocationService(session, access.tenant).update(
+        location_id, payload
+    )
+    await record_audit_event(
+        session,
+        "admin.location.updated",
+        actor_user_id=access.user_id,
+        business_id=business_id,
+        resource_type="location",
+        resource_id=location_id,
+        details={"changed_fields": ",".join(sorted(payload.model_fields_set))},
+    )
+    return location
 
 
 @router.post("/{location_id}/deactivate", response_model=LocationRead)
@@ -69,7 +98,16 @@ async def deactivate_location(
     business_id: UUID,
     location_id: UUID,
     session: Session,
-    tenant: Tenant,
+    access: WriteAccess,
 ) -> object:
-    tenant.require_business(business_id)
-    return await LocationService(session, tenant).deactivate(location_id)
+    access.tenant.require_business(business_id)
+    location = await LocationService(session, access.tenant).deactivate(location_id)
+    await record_audit_event(
+        session,
+        "admin.location.deactivated",
+        actor_user_id=access.user_id,
+        business_id=business_id,
+        resource_type="location",
+        resource_id=location_id,
+    )
+    return location

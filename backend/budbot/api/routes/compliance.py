@@ -6,13 +6,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from budbot.api.dependencies import get_session, get_tenant_context
+from budbot.api.dependencies import AdminAccess, get_session, require_business_permission
 from budbot.compliance.registry import ComplianceProfile
-from budbot.core.tenancy import TenantContext
 from budbot.schemas.compliance import (
     ComplianceProfileRead,
     ComplianceProfileUpdate,
 )
+from budbot.services.audit_service import record_audit_event
 from budbot.services.compliance_service import ComplianceService
 
 router = APIRouter(
@@ -20,7 +20,13 @@ router = APIRouter(
     tags=["compliance"],
 )
 Session = Annotated[AsyncSession, Depends(get_session)]
-Tenant = Annotated[TenantContext, Depends(get_tenant_context)]
+ReadAccess = Annotated[
+    AdminAccess, Depends(require_business_permission("compliance.read"))
+]
+WriteAccess = Annotated[
+    AdminAccess,
+    Depends(require_business_permission("compliance.write", csrf=True)),
+]
 
 
 def _read(profile: ComplianceProfile) -> ComplianceProfileRead:
@@ -45,9 +51,11 @@ def _read(profile: ComplianceProfile) -> ComplianceProfileRead:
 
 @router.get("", response_model=ComplianceProfileRead)
 async def get_compliance_profile(
-    business_id: UUID, session: Session, tenant: Tenant
+    business_id: UUID, session: Session, access: ReadAccess
 ) -> ComplianceProfileRead:
-    profile = await ComplianceService(session, tenant).get_active_profile(business_id)
+    profile = await ComplianceService(
+        session, access.tenant
+    ).get_active_profile(business_id)
     return _read(profile)
 
 
@@ -56,7 +64,18 @@ async def configure_compliance_profile(
     business_id: UUID,
     payload: ComplianceProfileUpdate,
     session: Session,
-    tenant: Tenant,
+    access: WriteAccess,
 ) -> ComplianceProfileRead:
-    profile = await ComplianceService(session, tenant).configure(business_id, payload)
+    profile = await ComplianceService(session, access.tenant).configure(
+        business_id, payload
+    )
+    await record_audit_event(
+        session,
+        "admin.compliance_profile.updated",
+        actor_user_id=access.user_id,
+        business_id=business_id,
+        resource_type="compliance_profile",
+        resource_id=profile.profile_id,
+        details={"profile_version": profile.version},
+    )
     return _read(profile)

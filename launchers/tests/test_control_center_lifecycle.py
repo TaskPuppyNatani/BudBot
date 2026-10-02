@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from branding_client import BrandingClientError
+from branding_client import BrandingAuthenticationRequired, BrandingClientError
 from control_center import BudBotControlCenter, MAX_EVENTS_PER_POLL
 from service_controller import BudBotServiceError
 
@@ -161,7 +161,7 @@ class ControlCenterLifecycleTests(unittest.TestCase):
             center.controller._valid_uuid.return_value = True
             center.controller.preview_file = Path(folder) / "preview-url.txt"
             center.controller.selected_business_file = Path(folder) / "selected-business.txt"
-            center._load_business_data = Mock(return_value=(BUSINESSES, BRANDING, b"", b""))
+            center._load_business_data = Mock(return_value=(BUSINESS_ID, BUSINESSES, BRANDING, b"", b""))
 
             center._service_worker("start")
             center._poll_events()
@@ -194,7 +194,7 @@ class ControlCenterLifecycleTests(unittest.TestCase):
         center.controller._business_id_from_url.return_value = BUSINESS_ID
         center.branding_client = Mock()
         center.branding_client.list_businesses.return_value = BUSINESSES
-        center._load_business_data = Mock(return_value=(BUSINESSES, BRANDING, b"", b""))
+        center._load_business_data = Mock(return_value=(BUSINESS_ID, BUSINESSES, BRANDING, b"", b""))
 
         center._detect_worker()
         center._poll_events()
@@ -225,6 +225,63 @@ class ControlCenterLifecycleTests(unittest.TestCase):
         center.stop_button.set_enabled.assert_called_once_with(True)
         center.restart_button.set_enabled.assert_called_once_with(True)
         center.save_button.set_enabled.assert_called_once_with(False)
+
+    def test_startup_and_reconnect_use_only_an_authorized_business_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            center = make_center()
+            center.branding_client = Mock()
+            center.branding_client.list_businesses.return_value = BUSINESSES
+            center.branding_client.load.return_value = BRANDING
+            center.controller.preview_file = Path(folder) / "preview.txt"
+            center.controller.selected_business_file = Path(folder) / "selected.txt"
+
+            center._finish_started_service("start", PREVIEW_URL, "stale-demo-business")
+            kind, payload = center.events.get_nowait()
+            self.assertEqual(kind, "service_done")
+            self.assertEqual(payload["business_id"], BUSINESS_ID)
+            self.assertEqual(payload["url"], PREVIEW_URL)
+            self.assertEqual(center.controller.preview_file.read_text().strip(), PREVIEW_URL)
+            self.assertEqual(
+                [call.args[0] for call in center.branding_client.load.call_args_list],
+                [BUSINESS_ID],
+            )
+
+            center.branding_client.load.reset_mock()
+            center._finish_detected_stack(PREVIEW_URL, "stale-demo-business")
+            kind, payload = center.events.get_nowait()
+            self.assertEqual(kind, "detected")
+            self.assertEqual(payload["business_id"], BUSINESS_ID)
+            self.assertEqual(payload["url"], PREVIEW_URL)
+            center.branding_client.load.assert_called_once_with(BUSINESS_ID)
+            self.assertEqual(center.controller.selected_business_file.read_text().strip(), BUSINESS_ID)
+
+    def test_missing_admin_sign_in_unblocks_controls_for_running_services(self) -> None:
+        center = make_stateful_center(busy=True, state="Starting")
+        with patch("control_center.messagebox.showerror") as showerror:
+            center._finish_auth_unavailable(
+                {"operation": "service", "action": "start"},
+                "Owner sign-in was canceled.",
+            )
+
+        self.assertFalse(center.busy)
+        self.assertEqual(center.state, "Running")
+        center.stop_button.set_enabled.assert_called_once_with(True)
+        center.restart_button.set_enabled.assert_called_once_with(True)
+        center.save_button.set_enabled.assert_called_once_with(False)
+        showerror.assert_called_once()
+
+    def test_startup_requires_explicit_admin_authentication(self) -> None:
+        center = make_center(controller=Mock())
+        center._load_business_data = Mock(
+            side_effect=BrandingAuthenticationRequired("sign in required")
+        )
+
+        center._finish_started_service("start", PREVIEW_URL, BUSINESS_ID)
+
+        kind, pending = center.events.get_nowait()
+        self.assertEqual(kind, "auth_required")
+        self.assertEqual(pending["operation"], "service")
+        self.assertEqual(pending["business_id"], BUSINESS_ID)
 
     def test_start_completion_handler_exception_is_visible_and_recoverable(self) -> None:
         center = make_stateful_center(busy=True)

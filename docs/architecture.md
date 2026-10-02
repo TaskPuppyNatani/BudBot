@@ -70,6 +70,30 @@ BudBot/
 
 An authenticated person who can administer one or more businesses, subject to permissions.
 
+#### M9A administrative authentication
+
+Administrative accounts use the existing `user_accounts` and
+`business_memberships` tables. Passwords use Argon2id. Successful login issues a
+random, host-only `budbot_admin_session` cookie; the database stores only its
+SHA-256 digest. Sessions expire after eight hours by default (configurable up to
+24 hours), use `HttpOnly`, `SameSite=Strict`, and `Secure` in production, and can
+be revoked by logout or logout-all. Unsafe cookie-authenticated requests must
+also present the session's CSRF token in `X-CSRF-Token`.
+
+Authorization is checked centrally against the path business UUID and the
+authenticated user's active membership. The role map is explicit: `owner` has
+all M9A permissions; `admin` can read and update business, locations, assistant,
+and branding, plus read compliance; `manager` can read those areas and update
+locations; `viewer` has read-only access. Unknown roles have no permissions.
+Membership rows do not grant access to any other business.
+
+`X-BudBot-Business-ID` remains a customer/development tenant selector. It never
+authenticates or authorizes administrative requests. First-owner setup is a
+one-time local CLI operation, not an HTTP registration route; the database's
+singleton setup row prevents a second initializer from claiming ownership.
+See `docs/self-hosting.md` for the setup command and `docs/configuration.md` for
+the production login-rate-limit key.
+
 ### Business/Tenant
 
 The tenant security boundary.
@@ -233,8 +257,19 @@ Examples:
 - compliance -> the authoritative `ComplianceEngine`.
 
 AI is additive. Slash commands and readiness checks do not depend on an AI provider.
-The M7 `POST /api/v1/chat` endpoint uses the existing temporary tenant/session
-conventions; authentication and the customer widget remain later work.
+The M7 `POST /api/v1/chat` endpoint uses the existing customer tenant/session
+conventions. M9A authenticates business administration; public customer/widget
+sessions remain separate and continue to use their established session and
+compliance checks.
+
+The widget first creates a customer session with `POST /api/v1/sessions`, then
+loads `GET /api/v1/sessions/{session_id}/widget`. This live, same-tenant session
+projection exposes only business name/logo/color, assistant name/greeting/avatar/
+color, active location IDs/names, and the effective age-attestation notice. It
+does not expose administrative configuration. After selecting a location through
+the existing session API, the widget reloads the projection for location overrides
+and compliance. Widget requests omit admin cookies; chat and commands continue to
+use the customer session ID and tenant selector, never owner authentication.
 
 ## Provider boundaries
 
