@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from budbot.api.dependencies import get_session, get_tenant_context
 from budbot.core.tenancy import TenantContext
+from budbot.models.session import CustomerSession
 from budbot.schemas.session import (
     AgeAttestationRequest,
     CustomerSessionCreate,
@@ -32,14 +33,26 @@ def _service(request: Request, session: AsyncSession, tenant: TenantContext) -> 
     )
 
 
+async def _committed_session_read(
+    session: AsyncSession, customer_session: CustomerSession
+) -> CustomerSessionRead:
+    # Validate before committing so failed response construction rolls back.
+    # The widget immediately uses this state in another request; yield cleanup
+    # may run after the response body is delivered and is too late to publish it.
+    result = CustomerSessionRead.model_validate(customer_session)
+    await session.commit()
+    return result
+
+
 @router.post("", response_model=CustomerSessionRead, status_code=status.HTTP_201_CREATED)
 async def create_customer_session(
     payload: CustomerSessionCreate,
     request: Request,
     session: Session,
     tenant: Tenant,
-) -> object:
-    return await _service(request, session, tenant).create(payload)
+) -> CustomerSessionRead:
+    customer_session = await _service(request, session, tenant).create(payload)
+    return await _committed_session_read(session, customer_session)
 
 
 @router.get("/{session_id}", response_model=CustomerSessionRead)
@@ -72,8 +85,9 @@ async def set_customer_session_location(
     request: Request,
     session: Session,
     tenant: Tenant,
-) -> object:
-    return await _service(request, session, tenant).set_location(session_id, payload)
+) -> CustomerSessionRead:
+    customer_session = await _service(request, session, tenant).set_location(session_id, payload)
+    return await _committed_session_read(session, customer_session)
 
 
 @router.get("/{session_id}/age-gate", response_model=SessionAgeGateRead)
@@ -94,7 +108,8 @@ async def submit_age_attestation(
     request: Request,
     session: Session,
     tenant: Tenant,
-) -> object:
+) -> CustomerSessionRead:
     """Submit a 21+ website/session attestation, never a transaction ID check."""
 
-    return await _service(request, session, tenant).attest(session_id, payload)
+    customer_session = await _service(request, session, tenant).attest(session_id, payload)
+    return await _committed_session_read(session, customer_session)
