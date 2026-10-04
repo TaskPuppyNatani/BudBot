@@ -6,4 +6,6 @@
 **/.venv
 **/__pycache__
 **/*.py[cod]
-frontend/admin
+frontend/admin/*
+!frontend/admin/public
+frontend/admin/**/node_modules
