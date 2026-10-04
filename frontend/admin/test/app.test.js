@@ -124,6 +124,35 @@ test("customer preview passes only business selection and business switching cle
   assert.deepEqual(opened[0], ["/widget/?business_id=a", "_blank", "noopener,noreferrer"]);
   field(root, "Business").value = "b"; field(root, "Business").dispatch("change"); await app.task;
   assert.equal(app.businessId, "b"); assert.equal(button(root, "Save changes").disabled, true);
+  button(root, "Customer preview").dispatch("click");
+  assert.deepEqual(opened[1], ["/widget/?business_id=b", "_blank", "noopener,noreferrer"]);
+});
+
+test("customer preview uses the browser-global receiver and offers guidance without a window handle", async () => {
+  const { root, app } = setup(); await app.start();
+  app.open = function (url, target, features) {
+    assert.equal(this, globalThis);
+    assert.deepEqual([url, target, features], ["/widget/?business_id=a", "_blank", "noopener,noreferrer"]);
+    return null;
+  };
+  button(root, "Customer preview").dispatch("click");
+  assert.match(app.message, /If no tab opened, allow popups/);
+  assert.equal(app.failed, false);
+  assert.equal(app.busy, false);
+  assert.ok(root.textContent.includes(app.message));
+  app.open = () => ({});
+  button(root, "Customer preview").dispatch("click");
+  assert.equal(app.message, "Customer preview opened in a separate tab.");
+});
+
+test("customer preview opening exceptions show safe retryable errors", async () => {
+  const { root, app } = setup(); await app.start();
+  app.open = () => { throw new Error("synthetic private browser detail"); };
+  button(root, "Customer preview").dispatch("click");
+  assert.match(app.message, /Could not open customer preview.*allow popups/i);
+  assert.ok(!app.message.includes("private browser detail"));
+  assert.equal(app.status.attributes["data-error"], "true");
+  assert.equal(button(root, "Customer preview").disabled, false);
 });
 
 test("login clears passwords and logout returns to a usable sign-in form", async () => {

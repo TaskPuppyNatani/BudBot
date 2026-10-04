@@ -8,16 +8,22 @@ import { createRequire } from "node:module";
 // Native fetch, Web Locks, form validation and HTTP are deliberately not mocked.
 const { chromium } = createRequire(import.meta.url)("playwright");
 const publicRoot = new URL("../public/", import.meta.url);
+const widgetRoot = new URL("../../widget/", import.meta.url);
 const account = token => ({ csrf_token: token, user: { email: "owner@example.test" }, businesses: [
   { business_id: "a", display_name: "Fixture business", role: "owner",
     permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write"] },
 ] });
 
 async function fixture(t) {
-  const calls = []; let token = 0;
+  const calls = []; const widgetNavigations = []; let token = 0;
   const server = createServer(async (request, response) => {
     const path = new URL(request.url, "http://localhost").pathname;
     if (path === "/favicon.ico") { response.writeHead(204).end(); return; }
+    if (path === "/widget/" || path === "/widget/src/embed.js") {
+      if (path === "/widget/") widgetNavigations.push({ url: request.url, referer: request.headers.referer || "" });
+      response.writeHead(200, { "Content-Type": path.endsWith(".js") ? "text/javascript" : "text/html" });
+      response.end(await readFile(new URL(path.endsWith(".js") ? "src/embed.js" : "index.html", widgetRoot))); return;
+    }
     if (path.startsWith("/admin/")) {
       const files = { "/admin/": "index.html", "/admin/styles.css": "styles.css",
         "/admin/src/app.js": "src/app.js", "/admin/src/client.js": "src/client.js", "/admin/src/forms.js": "src/forms.js" };
@@ -32,6 +38,18 @@ async function fixture(t) {
       response.writeHead(status, { "Content-Type": "application/json", ...headers });
       response.end(JSON.stringify(body));
     };
+    if (path === "/api/v1/sessions" || path === "/api/v1/sessions/customer-fixture/widget") {
+      call.hasAdminCookie = Boolean(request.headers.cookie?.includes("budbot_admin_session"));
+      call.hasCsrfHeader = Boolean(request.headers["x-csrf-token"]);
+      call.businessId = request.headers["x-budbot-business-id"];
+      if (path === "/api/v1/sessions") {
+        let text = ""; for await (const chunk of request) text += chunk;
+        call.payload = JSON.parse(text);
+        send(201, { id: "customer-fixture", age_gate_status: "NOT_REQUIRED" }); return;
+      }
+      send(200, { business: { display_name: "Fixture business" }, assistant: { display_name: "Fixture assistant" },
+        compliance: { requires_age_gate: false }, locations: [{ id: "one", display_name: "Main" }, { id: "two", display_name: "Second" }] }); return;
+    }
     if (path === "/api/v1/auth/login" && request.method === "POST") {
       let text = ""; for await (const chunk of request) text += chunk;
       const input = JSON.parse(text);
@@ -80,7 +98,7 @@ async function fixture(t) {
   await page.waitForFunction(() => document.querySelector('button[type="submit"]')?.disabled === false);
   assert.deepEqual(calls, [{ path: "/api/v1/auth/me", method: "GET", status: 401 }],
     `Anonymous startup must reach HTTP; UI: ${await page.locator('[role="status"]').textContent()}`);
-  return { context, page, calls, pageErrors, origin };
+  return { context, page, calls, pageErrors, origin, widgetNavigations };
 }
 
 async function signIn(page, password = "synthetic owner passphrase") {
@@ -144,5 +162,27 @@ test("sign out refreshes CSRF and returns to an enabled login form", async t => 
     ["GET", "/api/v1/auth/me", 200], ["POST", "/api/v1/auth/logout", 204],
   ]);
   assert.equal(await page.getByRole("button", { name: "Sign in", exact: true }).isEnabled(), true);
+  assert.deepEqual(pageErrors, []);
+});
+
+test("customer preview opens the selected widget with no opener/referrer or admin API credentials", async t => {
+  const { context, page, calls, pageErrors, origin, widgetNavigations } = await fixture(t);
+  await signIn(page);
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  calls.length = 0;
+  const opened = context.waitForEvent("page", { timeout: 2000 }).catch(error => {
+    throw new Error(`Preview did not open; browser errors: ${JSON.stringify(pageErrors)}`, { cause: error });
+  });
+  await page.getByRole("button", { name: "Customer preview", exact: true }).click();
+  const preview = await opened;
+  await preview.waitForURL(`${origin}/widget/?business_id=a`);
+  await preview.getByText("Choose a location to start chatting.", { exact: true }).waitFor();
+  assert.notEqual(preview, page);
+  assert.equal(await preview.evaluate(() => window.opener), null);
+  assert.equal(await preview.evaluate(() => document.referrer), "");
+  assert.deepEqual(widgetNavigations, [{ url: "/widget/?business_id=a", referer: "" }]);
+  assert.deepEqual(calls.map(call => call.path), ["/api/v1/sessions", "/api/v1/sessions/customer-fixture/widget"]);
+  assert.ok(calls.every(call => call.hasAdminCookie === false && call.hasCsrfHeader === false && call.businessId === "a"));
+  assert.deepEqual(calls[0].payload, {});
   assert.deepEqual(pageErrors, []);
 });

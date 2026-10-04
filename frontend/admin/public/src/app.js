@@ -72,6 +72,21 @@ export class AdminApp {
       this.status.setAttribute("data-error", String(this.failed));
     }
   }
+  openPreview() {
+    try {
+      // Call synchronously within the click gesture, with Window as receiver.
+      const preview = this.open.call(globalThis, previewUrl(this.businessId), "_blank", "noopener,noreferrer");
+      // noopener may return null even on success; do not claim it was blocked
+      // or opened. Keep actionable guidance visible when there is no handle.
+      this.message = preview ? "Customer preview opened in a separate tab."
+        : "Customer preview requested. If no tab opened, allow popups for BudBot and try again.";
+      this.failed = false;
+    } catch {
+      this.message = "Could not open customer preview. Allow popups for BudBot and try again.";
+      this.failed = true;
+    }
+    this.notice();
+  }
   async run(operation, success = "") {
     if (this.busy) return;
     this.busy = true; this.failed = false; this.message = "Working…";
@@ -179,7 +194,7 @@ export class AdminApp {
       if (title === this.tab) button.setAttribute("aria-current", "page");
       nav.append(button);
     }
-    nav.append(this.button("Customer preview", () => this.open(previewUrl(this.businessId), "_blank", "noopener,noreferrer"), "business.read"));
+    nav.append(this.button("Customer preview", () => this.openPreview(), "business.read"));
     fragment.append(nav, this.node("p", "Customer preview creates a separate customer session and applies the normal location and age checks.", { className: "muted" }));
     if (["Locations", "Assistant", "Compliance"].includes(this.tab)) {
       const selection = this.node("div", "", { className: "toolbar" });
