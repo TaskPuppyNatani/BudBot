@@ -57,6 +57,17 @@ async def update_assistant(
     return assistant
 
 
+@router.get(
+    "/locations/{location_id}/assistant-override",
+    response_model=LocationAssistantOverrideRead | None,
+)
+async def get_location_assistant_override(
+    business_id: UUID, location_id: UUID, session: Session, access: ReadAccess
+) -> object:
+    access.tenant.require_business(business_id)
+    return await AssistantService(session, access.tenant).get_override(location_id)
+
+
 @router.patch(
     "/locations/{location_id}/assistant-override",
     response_model=LocationAssistantOverrideRead,

@@ -1,6 +1,7 @@
 """Safe API representations for compliance profile configuration."""
 
 from datetime import date
+from uuid import UUID
 
 from pydantic import Field, StringConstraints
 from typing import Annotated
@@ -38,3 +39,13 @@ class ComplianceProfileRead(DomainSchema):
     minimum_age: int | None
     website_attestation_notice: str
     medical_eligibility_notice: str | None
+
+
+class EffectiveComplianceRead(DomainSchema):
+    location_id: UUID
+    location_active: bool
+    compliance_domain: str
+    jurisdiction_code: str | None
+    status: str
+    reason_code: str | None
+    profile: ComplianceProfileRead | None

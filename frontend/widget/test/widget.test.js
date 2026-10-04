@@ -158,3 +158,25 @@ test("business with no locations can load its base assistant and chat", async (t
   assert.equal(widget.assistant.display_name, "Test Assistant");
   assert.equal(widget.screen, "chat");
 });
+
+test("published branding accepts saved legacy references through the safe public route", async () => {
+  const { publishedBrandAssetUrl } = await import("../src/embed.js");
+  const reference = "/local-assets/12345678-1234-4678-9234-567812345678/0123456789abcdef0123456789abcdef.png";
+  assert.equal(publishedBrandAssetUrl(reference, "https://budbot.test"), `https://budbot.test${reference.replace("/local-assets/", "/assets/branding/")}`);
+  assert.equal(publishedBrandAssetUrl(reference.replace("/local-assets/", "/assets/branding/"), "https://budbot.test"), `https://budbot.test${reference.replace("/local-assets/", "/assets/branding/")}`);
+  assert.equal(publishedBrandAssetUrl("https://other.test/logo.png", "https://budbot.test"), null);
+});
+
+test("customer branding image requests omit owner cookies", async t => {
+  const { loadBrandImage } = await import("../src/embed.js");
+  const previousFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = previousFetch; });
+  let options;
+  globalThis.fetch = async (url, provided) => { options = provided; return { ok: true, blob: async () => new Blob(["image bytes"], { type: "image/png" }) }; };
+  const callbacks = {};
+  const image = { addEventListener: (name, fn) => { callbacks[name] = fn; } };
+  await loadBrandImage(image, "https://budbot.test/assets/branding/test.png");
+  assert.deepEqual(options, { credentials: "omit" });
+  assert.ok(image.src.startsWith("blob:"));
+  callbacks.load();
+});

@@ -8,12 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from budbot.api.dependencies import AdminAccess, get_session, require_business_permission
 from budbot.compliance.registry import ComplianceProfile
+from budbot.compliance.resolver import ComplianceResolver
 from budbot.schemas.compliance import (
     ComplianceProfileRead,
     ComplianceProfileUpdate,
+    EffectiveComplianceRead,
 )
 from budbot.services.audit_service import record_audit_event
 from budbot.services.compliance_service import ComplianceService
+from budbot.services.business_service import BusinessService
+from budbot.services.location_service import LocationService
 
 router = APIRouter(
     prefix="/api/v1/businesses/{business_id}/compliance-profile",
@@ -57,6 +61,28 @@ async def get_compliance_profile(
         session, access.tenant
     ).get_active_profile(business_id)
     return _read(profile)
+
+
+@router.get("/locations/{location_id}", response_model=EffectiveComplianceRead)
+async def get_effective_location_compliance(
+    business_id: UUID, location_id: UUID, session: Session, access: ReadAccess
+) -> EffectiveComplianceRead:
+    business = await BusinessService(session).get(access.tenant, business_id)
+    location = await LocationService(session, access.tenant).get(location_id)
+    resolution = ComplianceResolver().resolve(
+        business.compliance_domain,
+        location if location.active else None,
+        business_id=business_id,
+    )
+    return EffectiveComplianceRead(
+        location_id=location_id,
+        location_active=location.active,
+        compliance_domain=resolution.compliance_domain,
+        jurisdiction_code=resolution.jurisdiction_code,
+        status=resolution.status.value,
+        reason_code=resolution.reason_code,
+        profile=_read(resolution.profile) if resolution.profile else None,
+    )
 
 
 @router.patch("", response_model=ComplianceProfileRead)

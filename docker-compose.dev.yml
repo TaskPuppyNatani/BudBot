@@ -42,6 +42,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./frontend/widget:/app/frontend/widget:ro
+      - ./frontend/admin/public:/app/frontend/admin/public:ro
       - budbot_local_assets:/app/local-assets
     depends_on:
       db:

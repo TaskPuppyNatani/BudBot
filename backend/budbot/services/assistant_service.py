@@ -74,6 +74,16 @@ class AssistantService:
         await self.session.refresh(override)
         return override
 
+    async def get_override(self, location_id: UUID) -> LocationAssistantOverride | None:
+        """Read explicit values without creating or materializing an override."""
+
+        await self.locations.get(location_id, resource_name="location")
+        return await self.session.scalar(
+            self.overrides.select().where(
+                LocationAssistantOverride.location_id == location_id
+            )
+        )
+
     async def resolve(
         self, business_id: UUID, location_id: UUID
     ) -> EffectiveAssistantConfiguration:

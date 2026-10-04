@@ -24,6 +24,7 @@ class AdminBusinessMembershipRead(DomainSchema):
     business_id: UUID
     display_name: str
     role: str
+    permissions: list[str]
 
 
 class AdminUserRead(DomainSchema):

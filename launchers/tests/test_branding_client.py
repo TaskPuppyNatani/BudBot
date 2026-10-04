@@ -41,6 +41,22 @@ class BrandingClientTests(unittest.TestCase):
             with self.assertRaisesRegex(BrandingClientError, "PNG, JPG, or WebP"):
                 encode_image_file(unsupported)
 
+    def test_dashboard_published_images_load_and_preview_in_control_center(self) -> None:
+        business_id = "12345678-1234-4678-9234-567812345678"
+        reference = f"/assets/branding/{business_id}/0123456789abcdef0123456789abcdef.png"
+        self.assertEqual(validate_local_asset_reference(reference), reference)
+        client = LocalBrandingClient()
+        with patch.object(client, "_request", side_effect=[
+            {"logo_reference": reference}, {"avatar_reference": reference},
+        ]):
+            self.assertEqual(client.load(business_id)["business"]["logo_reference"], reference)
+        with patch.object(client.opener, "open") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = b"png preview"
+            self.assertEqual(client.load_asset_preview(reference, business_id), b"png preview")
+            self.assertIn(f"/businesses/{business_id}/assets/", opened.call_args.args[0].full_url)
+        with self.assertRaisesRegex(BrandingClientError, "different business"):
+            client.load_asset_preview(reference, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
     def test_asset_preview_uses_the_selected_business_scoped_endpoint(self) -> None:
         class Response:
             def __enter__(self):

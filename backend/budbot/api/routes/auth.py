@@ -14,7 +14,7 @@ from budbot.api.dependencies import (
     require_csrf,
 )
 from budbot.core.config import Settings
-from budbot.core.permissions import AdminPermission
+from budbot.core.permissions import AdminPermission, permissions_for_role
 from budbot.core.security import new_opaque_token, token_digest
 from budbot.models.auth import AdminSession
 from budbot.models.user import UserAccount
@@ -52,6 +52,7 @@ async def _session_read(
                 business_id=business.id,
                 display_name=business.display_name,
                 role=membership.role,
+                permissions=sorted(permissions_for_role(membership.role)),
             )
             for business, membership in businesses
         ],

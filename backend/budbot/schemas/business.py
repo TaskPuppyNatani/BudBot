@@ -56,6 +56,8 @@ class BusinessCreate(DomainSchema):
     faq_enabled: bool = True
     payments_info_enabled: bool = True
     policies_info_enabled: bool = True
+    products_enabled: bool = True
+    promotions_enabled: bool = True
     assistant: AssistantCreate
 
     _phone = field_validator("main_phone")(validate_phone)
@@ -78,6 +80,8 @@ class BusinessUpdate(DomainSchema):
     faq_enabled: bool | None = None
     payments_info_enabled: bool | None = None
     policies_info_enabled: bool | None = None
+    products_enabled: bool | None = None
+    promotions_enabled: bool | None = None
 
     _phone = field_validator("main_phone")(validate_phone)
     _timezone = field_validator("default_timezone")(validate_timezone)
@@ -92,6 +96,8 @@ class BusinessUpdate(DomainSchema):
             "faq_enabled",
             "payments_info_enabled",
             "policies_info_enabled",
+            "products_enabled",
+            "promotions_enabled",
         }
         for field in required & self.model_fields_set:
             if getattr(self, field) is None:
@@ -118,6 +124,8 @@ class BusinessRead(DomainSchema):
     faq_enabled: bool
     payments_info_enabled: bool
     policies_info_enabled: bool
+    products_enabled: bool
+    promotions_enabled: bool
     compliance_profile_id: str
     compliance_profile_version: str
     compliance_domain: str

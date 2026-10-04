@@ -11,8 +11,8 @@ export function needsAgeGate(profile, session) {
 }
 
 export function safeLocalAssetUrl(reference, apiBase) {
-  if (typeof reference !== "string" || !reference.startsWith("/local-assets/")) return null;
-  if (!/^\/local-assets\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[0-9a-f]{32}\.(?:png|jpg|webp)$/.test(reference)) return null;
+  if (typeof reference !== "string" || !/^\/(?:local-assets|assets\/branding)\//.test(reference)) return null;
+  if (!/^\/(?:local-assets|assets\/branding)\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/[0-9a-f]{32}\.(?:png|jpg|webp)$/.test(reference)) return null;
   try {
     const base = new URL(apiBase);
     const asset = new URL(reference, base);
@@ -21,6 +21,24 @@ export function safeLocalAssetUrl(reference, apiBase) {
   } catch {
     return null;
   }
+}
+
+export function publishedBrandAssetUrl(reference, apiBase) {
+  const safe = safeLocalAssetUrl(reference, apiBase);
+  if (!safe) return null;
+  const url = new URL(safe);
+  url.pathname = url.pathname.replace("/local-assets/", "/assets/branding/");
+  return url.href;
+}
+
+export async function loadBrandImage(image, url) {
+  // Public branding fetches omit owner cookies as well as customer API calls.
+  const response = await fetch(url, { credentials: "omit" });
+  if (!response.ok) throw new Error("Image unavailable.");
+  const objectUrl = URL.createObjectURL(await response.blob());
+  image.addEventListener("load", () => URL.revokeObjectURL(objectUrl), { once: true });
+  image.addEventListener("error", () => URL.revokeObjectURL(objectUrl), { once: true });
+  image.src = objectUrl;
 }
 
 export function widgetBootstrapConfig(element, defaultApiBase) {
@@ -76,13 +94,13 @@ export class BudBotWidget extends (globalThis.HTMLElement || class {}) {
 
   setBusinessLogo(reference) {
     const image = this.$(".business-logo");
-    const safeUrl = safeLocalAssetUrl(reference, this.apiBase);
+    const safeUrl = publishedBrandAssetUrl(reference, this.apiBase);
     image.hidden = true;
     this.$(".business-initial").hidden = false;
     if (!safeUrl) return;
     image.onload = () => { image.hidden = false; this.$(".business-initial").hidden = true; };
     image.onerror = () => { image.hidden = true; this.$(".business-initial").hidden = false; };
-    image.src = safeUrl;
+    loadBrandImage(image, safeUrl).catch(() => image.onerror());
   }
 
   setBrandColor(color) {
@@ -93,7 +111,7 @@ export class BudBotWidget extends (globalThis.HTMLElement || class {}) {
     // `customElements.define` can run before the preview bootstrap creates the
     // element, so reflect attributes after they have been applied.
     Object.assign(this, widgetBootstrapConfig(this, location.origin));
-    if (!this.businessId) throw new Error("Open the widget preview from BudBot Control Center.");
+    if (!this.businessId) throw new Error("Open the widget preview from BudBot administration or Control Center.");
     this.session = await this.api("/api/v1/sessions", { method: "POST", body: JSON.stringify({}) });
     const { locations } = await this.loadConfiguration();
     const select = this.$("select.loc");
@@ -172,12 +190,12 @@ export class BudBotWidget extends (globalThis.HTMLElement || class {}) {
         this.business.logo_reference,
         this.assistant.avatar_reference,
       );
-      const imageUrl = safeLocalAssetUrl(avatarReference, this.apiBase);
+      const imageUrl = publishedBrandAssetUrl(avatarReference, this.apiBase);
       if (imageUrl) {
         const avatar = document.createElement("img");
         avatar.className = "assistant-avatar";
         avatar.alt = "";
-        avatar.src = imageUrl;
+        loadBrandImage(avatar, imageUrl).catch(() => { avatar.hidden = true; });
         avatar.onerror = () => avatar.remove();
         row.append(avatar);
       } else {

@@ -1,4 +1,4 @@
-"""Validated, business-scoped image storage for the local development editor."""
+"""Validated, business-scoped image storage for authenticated editors."""
 
 from __future__ import annotations
 
@@ -95,6 +95,7 @@ class LocalAssetStore:
     def render_preview(self, business_id: UUID, reference: str) -> bytes:
         """Render a small PNG for Tk in memory without storing a second image."""
 
+        reference = reference.replace("/assets/branding/", "/local-assets/", 1)
         prefix = f"/local-assets/{business_id}/"
         if not reference.startswith(prefix):
             raise LocalAssetError("This image does not belong to the selected business.")
@@ -128,6 +129,7 @@ class LocalAssetStore:
 
         if not reference:
             return
+        reference = reference.replace("/assets/branding/", "/local-assets/", 1)
         prefix = f"/local-assets/{business_id}/"
         if not reference.startswith(prefix):
             return
@@ -138,3 +140,19 @@ class LocalAssetStore:
         path = (tenant_root / filename).resolve()
         if path.parent == tenant_root:
             path.unlink(missing_ok=True)
+
+    def read_published(self, business_id: UUID, filename: str) -> bytes:
+        """Read generated images only; publication is checked by the API first."""
+        if not _ASSET_NAME.fullmatch(filename):
+            raise LocalAssetError("This image is unavailable.")
+        root = self.root.resolve()
+        directory = (root / str(business_id)).resolve()
+        path = (directory / filename).resolve()
+        if not directory.is_relative_to(root) or path.parent != directory:
+            raise LocalAssetError("This image is unavailable.")
+        try:
+            if path.stat().st_size > MAX_IMAGE_BYTES:
+                raise LocalAssetError("This image is unavailable.")
+            return path.read_bytes()
+        except OSError:
+            raise LocalAssetError("This image is unavailable.") from None

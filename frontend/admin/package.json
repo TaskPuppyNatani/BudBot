@@ -1,0 +1,9 @@
+{
+  "name": "@budbot/admin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/run.js",
+    "check": "node --check public/src/client.js && node --check public/src/forms.js && node --check public/src/app.js"
+  }
+}

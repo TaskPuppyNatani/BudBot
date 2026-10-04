@@ -12,6 +12,7 @@ COPY backend/budbot ./budbot
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/alembic ./alembic
 COPY frontend/widget /app/frontend/widget
+COPY frontend/admin/public /app/frontend/admin/public
 
 RUN pip install --no-cache-dir .
 

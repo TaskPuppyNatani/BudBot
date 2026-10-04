@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from budbot.api.errors import install_exception_handlers
 from budbot.api.routes.auth import router as auth_router
+from budbot.api.routes.branding import router as branding_router, published_branding_image
 from budbot.api.routes.assistants import router as assistants_router
 from budbot.api.routes.businesses import router as businesses_router
 from budbot.api.routes.compliance import router as compliance_router
@@ -62,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_exception_handlers(application)
     application.include_router(health_router)
     application.include_router(auth_router)
+    application.include_router(branding_router)
     application.include_router(businesses_router)
     application.include_router(locations_router)
     application.include_router(assistants_router)
@@ -71,11 +73,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(chat_router)
     if active_settings.environment == "development":
         application.include_router(local_branding_router)
-        application.mount(
-            "/local-assets",
-            StaticFiles(directory=active_settings.local_assets_dir, check_dir=False),
-            name="local-assets",
+        application.add_api_route(
+            "/local-assets/{business_id}/{filename}", published_branding_image,
+            methods=["GET"], include_in_schema=False,
         )
+    admin_dir = Path(__file__).resolve().parents[2] / "frontend" / "admin" / "public"
+    application.mount("/admin", StaticFiles(directory=admin_dir, html=True), name="admin")
+
+    @application.middleware("http")
+    async def admin_response_headers(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith(("/api/v1/auth/", "/api/v1/businesses")):
+            response.headers["Cache-Control"] = "no-store"
+        if request.url.path == "/admin" or request.url.path.startswith("/admin/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "img-src 'self' blob:; object-src 'none'; base-uri 'none'; "
+                "frame-ancestors 'none'; form-action 'self'"
+            )
+        return response
     widget_dir = Path(__file__).resolve().parents[2] / "frontend" / "widget"
     application.mount(
         "/widget", StaticFiles(directory=widget_dir, html=True), name="widget"

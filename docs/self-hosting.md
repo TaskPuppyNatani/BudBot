@@ -82,6 +82,24 @@ The production compose stack should include health checks and persistent databas
 
 A separate development compose file may expose development conveniences.
 
+## Web administration
+
+M9B Pass 1 serves the separate dashboard at `/admin/` on the backend origin.
+After owner setup, open `http://127.0.0.1:8000/admin/` for the local development
+stack. Production requires HTTPS for M9A's Secure session cookie. Sign in in the
+browser; Control Center does not transfer its credentials. No frontend build or
+package installation is required.
+
+The Docker image includes `frontend/admin/public`; development Compose mounts
+that directory read-only. Persist `BUDBOT_LOCAL_ASSETS_DIR` in the deployment
+(the development stack already uses its existing named volume). Ensure the
+runtime service user can write this application-owned image directory. The
+normal branding endpoint is authenticated; public image delivery is restricted
+to currently published logo/avatar references, not the directory contents.
+
+Follow the manual checklist in `frontend/admin/README.md` after rebuilding and
+restarting. No new database migration is needed for this pass.
+
 ## No mandatory proprietary cloud dependencies
 
 Core BudBot must not require:

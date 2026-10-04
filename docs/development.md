@@ -333,6 +333,27 @@ existing tenant/session scopes. `X-BudBot-Business-ID` is never admin identity.
 M9A does not add membership invitation management, provider credential storage,
 admin command execution, audit browsing, or a dashboard; those are M9B work.
 
+### M9B Pass 1 - Core authenticated dashboard
+
+Implemented at `/admin/` as a separate ES-module frontend with no build dependency.
+It uses M9A login/logout, membership-derived permissions and existing settings
+services for business flags, locations/hours, assistant defaults/overrides and
+compliance visibility. Browser sign-in remains separate from Control Center.
+
+Writes refresh the rotating CSRF token immediately before submission and use a
+same-origin Web Lock where available; there is no session polling or persistent
+client token storage. Permission failures are not automatically retried.
+
+Normal authenticated branding saves use `/api/v1/businesses/{business_id}/branding`.
+Published logo/avatar delivery uses `/assets/branding/{business_id}/{filename}`
+and checks current database references. The development `/local-assets/` alias
+now uses the same publication check. Existing Control Center endpoints remain
+development-only and authenticated. No schema migration is needed for Pass 1.
+
+See `frontend/admin/README.md` for frontend checks and the desktop/browser manual
+acceptance checklist. Provider configuration/secrets, FAQs, audit browsing, admin
+commands and membership management remain outside this pass.
+
 ### M9 - Admin UI and admin commands
 
 Admin UI must support:

@@ -13,7 +13,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 BASE_URL = "http://127.0.0.1:8000"
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 _ASSET_REFERENCE = re.compile(
-    r"^/local-assets/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{32}\.(?:png|jpg|webp)$"
+    r"^/(?:local-assets|assets/branding)/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/[0-9a-f]{32}\.(?:png|jpg|webp)$"
 )
 _ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -164,7 +164,7 @@ class LocalBrandingClient:
             return b""
         reference_business_id, filename = safe_reference.removeprefix(
             "/local-assets/"
-        ).split("/", 1)
+        ).removeprefix("/assets/branding/").split("/", 1)
         if reference_business_id != business_id:
             raise BrandingClientError("This image belongs to a different business.")
         request = Request(
