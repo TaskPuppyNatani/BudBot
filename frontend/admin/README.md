@@ -38,6 +38,11 @@ where supported. A CSRF rejection gets one bounded refresh/retry; permission
 failures do not. Other browsers still serialize this tab's writes and recover
 from CSRF changes with a bounded retry. A connection timeout never triggers an
 automatic mutation retry: reload settings to check whether the write completed.
+Successful login and `/auth/me` explicitly commit session/CSRF issuance before
+returning the cookie/token; later request cleanup cannot expose uncommitted
+security state. `/auth/me` still rotates the token, with only its digest stored.
+Response construction failures roll back before this narrow commit boundary;
+unrelated application transactions retain their normal rollback behavior.
 
 Business settings, locations/hours, assistant defaults/overrides, compliance
 visibility and branding reuse existing domain services. An inherited override is

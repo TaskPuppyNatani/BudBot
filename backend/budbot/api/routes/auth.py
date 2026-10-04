@@ -77,6 +77,10 @@ async def login(
         response.status_code = status.HTTP_401_UNAUTHORIZED
         return {"detail": "Invalid email or password."}
 
+    result = await _session_read(session, issued.user, issued.csrf_token)
+    # Request-scope dependency cleanup can run after response delivery. Publish
+    # the cookie/token only after its session, CSRF digest and audit are committed.
+    await session.commit()
     settings: Settings = request.app.state.settings
     response.set_cookie(
         key=ADMIN_SESSION_COOKIE,
@@ -87,7 +91,7 @@ async def login(
         samesite="strict",
         path="/",
     )
-    return await _session_read(session, issued.user, issued.csrf_token)
+    return result
 
 
 @router.get("/me", response_model=AdminSessionRead)
@@ -108,7 +112,11 @@ async def current_admin(
         )
     csrf_token = new_opaque_token()
     admin_session.csrf_digest = token_digest(csrf_token)
-    return await _session_read(session, user, csrf_token)
+    result = await _session_read(session, user, csrf_token)
+    # An immediately following unsafe request must see this digest. Construct the
+    # validated response first so failed application work still rolls back.
+    await session.commit()
+    return result
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)

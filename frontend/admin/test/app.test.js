@@ -147,6 +147,19 @@ test("initial network failure shows a usable sign-in form and visible recovery e
   assert.match(root.textContent, /Connection failed/);
 });
 
+test("successful reload clears a prior mutation security error and red status", async () => {
+  const { root, app, api } = setup(); await app.start();
+  api.mutate = async () => { throw new ApiError(403, "Security token changed. Please retry."); };
+  form(root, "Business settings").dispatch("submit"); await app.task;
+  assert.equal(app.failed, true);
+  assert.equal(app.status.attributes["data-error"], "true");
+  button(root, "Reload settings").dispatch("click"); await app.task;
+  assert.equal(app.failed, false);
+  assert.equal(app.status.attributes["data-error"], "false");
+  assert.equal(app.message, "Reloaded current settings.");
+  assert.equal(button(root, "Save changes").disabled, false);
+});
+
 test("failed initial settings load retains authorized selection for retry", async () => {
   const { root, app, api } = setup(); const request = api.request;
   api.request = async () => { throw new ApiError(500, "Settings unavailable. Please retry."); };

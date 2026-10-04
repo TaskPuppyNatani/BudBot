@@ -44,6 +44,12 @@ async function fixture(t) {
       send(401, { detail: "Authentication is required." }); return;
     }
     if (path === "/api/v1/auth/me") { send(200, account(String(++token))); return; }
+    if (path === "/api/v1/auth/logout" && request.method === "POST") {
+      if (request.headers["x-csrf-token"] !== String(token)) {
+        send(403, { detail: "A valid CSRF token is required for this request." }); return;
+      }
+      send(204, null, { "Set-Cookie": "budbot_admin_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax" }); return;
+    }
     if (path === "/api/v1/businesses/a" && request.method === "PATCH") {
       // Make a concurrent /me rotation observable while a write is in flight.
       const submittedToken = request.headers["x-csrf-token"];
@@ -125,4 +131,18 @@ test("two real tabs preserve Web Lock coordination across CSRF refresh and write
   });
   await Promise.all([write(page), write(second)]);
   assert.deepEqual(calls.map(call => [call.method, call.status]), [["GET", 200], ["PATCH", 200], ["GET", 200], ["PATCH", 200]]);
+});
+
+test("sign out refreshes CSRF and returns to an enabled login form", async t => {
+  const { page, calls, pageErrors } = await fixture(t);
+  await signIn(page);
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  calls.length = 0;
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByRole("heading", { name: "Sign in to BudBot", exact: true }).waitFor();
+  assert.deepEqual(calls.map(call => [call.method, call.path, call.status]), [
+    ["GET", "/api/v1/auth/me", 200], ["POST", "/api/v1/auth/logout", 204],
+  ]);
+  assert.equal(await page.getByRole("button", { name: "Sign in", exact: true }).isEnabled(), true);
+  assert.deepEqual(pageErrors, []);
 });

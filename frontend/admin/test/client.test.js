@@ -61,6 +61,20 @@ test("CSRF recovery is bounded and does not retry permission errors", async () =
   assert.equal(writes, 1);
 });
 
+test("a genuine stale-CSRF rejection refreshes once and completes the mutation", async () => {
+  let gets = 0; let writes = 0;
+  const api = new AdminClient(async (path, options) => {
+    if (path.endsWith("/me")) return response(200, account(String(++gets)));
+    writes++;
+    assert.equal(options.headers["X-CSRF-Token"], String(gets));
+    return writes === 1
+      ? response(403, { detail: "A valid CSRF token is required for this request." })
+      : response(200, { display_name: "Saved after refresh" });
+  }, null);
+  assert.deepEqual(await api.mutate("/api/v1/businesses/a", "PATCH", {}), { display_name: "Saved after refresh" });
+  assert.equal(gets, 2); assert.equal(writes, 2);
+});
+
 test("expiry/revocation stops writes and returns an actionable sign-in error", async () => {
   const calls = [];
   const api = new AdminClient(async path => { calls.push(path); return response(401, { detail: "Authentication is required." }); }, null);
