@@ -86,3 +86,26 @@ test("network failures use a bounded signal and do not strand subsequent request
   api.fetcher = async () => response(200, account("recovered"));
   assert.equal((await api.restore()).csrf_token, "recovered");
 });
+
+test("anonymous restore and login use the browser-global fetch receiver and recover the queue", async () => {
+  const calls = [];
+  const api = new AdminClient(function (path, options) {
+    assert.equal(this, globalThis);
+    calls.push({ path, method: options.method || "GET" });
+    return Promise.resolve(path.endsWith("/me")
+      ? response(401, { detail: "Authentication is required." })
+      : response(200, account("logged-in")));
+  }, null);
+  await assert.rejects(api.restore(), error => error.status === 401);
+  assert.equal((await api.login("owner@example.test", "synthetic passphrase")).csrf_token, "logged-in");
+  assert.deepEqual(calls, [{ path: "/api/v1/auth/me", method: "GET" }, { path: "/api/v1/auth/login", method: "POST" }]);
+});
+
+test("synchronous browser/setup errors stay safe but retain their diagnostic cause", async () => {
+  const cause = new TypeError("synthetic internal browser detail");
+  const api = new AdminClient(() => { throw cause; }, null);
+  await assert.rejects(api.restore(), error => error instanceof ApiError && error.cause === cause &&
+    /browser client error/.test(error.message) && !/Connection failed|internal browser detail/.test(error.message));
+  api.fetcher = async () => response(200, account("recovered"));
+  assert.equal((await api.restore()).csrf_token, "recovered");
+});

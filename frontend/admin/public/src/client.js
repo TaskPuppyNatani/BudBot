@@ -1,7 +1,7 @@
 const CSRF_ERROR = "A valid CSRF token is required for this request.";
 
 export class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, options) { super(message, options); this.status = status; }
 }
 
 export function errorMessage(status, body) {
@@ -31,15 +31,22 @@ export class AdminClient {
   }
   async request(path, options = {}) {
     if (!path.startsWith("/api/v1/")) throw new Error("Invalid administrative API path.");
-    let response;
+    let pending, response;
     try {
-      response = await this.fetcher(path, {
+      // Browser-native fetch requires Window as its receiver, not AdminClient.
+      // Keep synchronous setup errors separate from rejected network requests.
+      pending = this.fetcher.call(globalThis, path, {
         ...options, credentials: "same-origin", cache: "no-store",
         signal: AbortSignal.timeout(30_000),
         headers: { "Content-Type": "application/json", ...options.headers },
       });
-    } catch {
-      throw new ApiError(0, "Connection failed or timed out. Check BudBot and reload settings before retrying; a saved change may already have completed.");
+    } catch (cause) {
+      throw new ApiError(0, "BudBot could not start the request. Reload the page or update your browser; if it persists, report a browser client error.", { cause });
+    }
+    try {
+      response = await pending;
+    } catch (cause) {
+      throw new ApiError(0, "Connection failed or timed out. Check BudBot and reload settings before retrying; a saved change may already have completed.", { cause });
     }
     let body = null;
     if (response.status !== 204) {

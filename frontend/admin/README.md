@@ -10,6 +10,21 @@ npm --prefix frontend/admin test
 npm --prefix frontend/admin run check
 ```
 
+An additional native-browser login/coordination regression uses an already
+available Playwright and Chromium runtime (no frontend build dependency):
+
+```bash
+npm --prefix frontend/admin run test:browser
+```
+
+Set `NODE_PATH` if Playwright is supplied by a shared runtime, and optionally
+`BUDBOT_TEST_BROWSER_EXECUTABLE` to select its installed Chromium executable.
+The test serves isolated synthetic HTTP responses; it does not use real accounts
+or a running BudBot database. It checks native fetch, anonymous startup, invalid
+credential retry, dashboard loading and same-origin Web Locks across two tabs.
+Synchronous request-setup errors have a safe browser-client message and retain
+their original `cause` for developer inspection; network failures stay generic.
+
 Sign in with an account initialized through `python -m budbot.admin setup-owner`.
 Browser authentication is separate from Control Center. The account response
 supplies each membership's effective permissions from the central backend policy;

@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node test/run.js",
+    "test:browser": "node --test test/browser-login.test.js",
     "check": "node --check public/src/client.js && node --check public/src/forms.js && node --check public/src/app.js"
   }
 }
