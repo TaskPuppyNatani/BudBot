@@ -13,11 +13,12 @@ import time
 from collections.abc import Callable
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 from uuid import UUID
 
 Progress = Callable[[str], None]
 DOCKER_COMMAND_TIMEOUT_SECONDS = 30 * 60
+LOCAL_WIDGET_URL = "http://127.0.0.1:8000/widget/"
 
 
 class BudBotServiceError(RuntimeError):
@@ -263,33 +264,62 @@ class BudBotServiceController:
         self.stop()
         return self.start()
 
-    def detect_running(self) -> str | None:
-        """Return the saved preview URL only if this tenant/API is reachable."""
-
-        if not self.preview_file.is_file():
-            return None
+    def _cached_preview_url(self) -> str | None:
+        """Treat preview metadata as a local customer selector, not identity."""
         try:
-            url = self.preview_file.read_text(encoding="utf-8").strip()
+            with self.preview_file.open(encoding="utf-8") as saved:
+                contents = saved.read(4097)
+            url = contents.strip()
+            parsed = urlparse(url)
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            if (
+                len(contents) > 4096
+                or parsed.scheme != "http"
+                or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                or parsed.port != 8000
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path != "/widget/"
+                or parsed.params
+                or parsed.fragment
+                or set(query) != {"business_id"}
+                or len(query["business_id"]) != 1
+            ):
+                raise ValueError("Unsafe or malformed cached preview URL")
             business_id = self._business_id_from_url(url)
-        except (OSError, BudBotServiceError):
-            self.preview_file.unlink(missing_ok=True)
+            return f"{LOCAL_WIDGET_URL}?business_id={UUID(business_id)}"
+        except OSError:
+            # Missing/unreadable metadata is not evidence of stopped services.
             return None
+        except (UnicodeError, ValueError, BudBotServiceError):
+            try:
+                self.preview_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+
+    def detect_running(self) -> str | None:
+        """Check local service readiness independently of owner authentication."""
+
+        url = self._cached_preview_url()
+        if url is None:
+            try:
+                selected = self.selected_business_file.read_text(encoding="utf-8").strip()
+                if self._valid_uuid(selected):
+                    url = f"{LOCAL_WIDGET_URL}?business_id={UUID(selected)}"
+            except (OSError, UnicodeError):
+                pass
         try:
             with urlopen("http://127.0.0.1:8000/ready", timeout=1.5):
                 pass
-            with urlopen("http://127.0.0.1:8000/widget/", timeout=1.5):
+            with urlopen(LOCAL_WIDGET_URL, timeout=1.5):
                 pass
-            request = Request(
-                f"http://127.0.0.1:8000/api/v1/businesses/{business_id}",
-                headers={"X-BudBot-Business-ID": business_id},
-            )
-            with urlopen(request, timeout=1.5):
-                pass
-            # Reconstruct a trusted loopback URL; never open arbitrary contents
-            # written into the cache file.
-            return f"http://127.0.0.1:8000/widget/?business_id={business_id}"
+            # No data creation or protected business reads. Without a saved
+            # selection the public shell is enough to report Running; explicit
+            # branding sign-in can later select an authorized existing business.
+            return url or LOCAL_WIDGET_URL
         except (OSError, URLError, TimeoutError):
-            self.preview_file.unlink(missing_ok=True)
+            # Readiness/network failure does not invalidate saved business data.
             return None
 
 

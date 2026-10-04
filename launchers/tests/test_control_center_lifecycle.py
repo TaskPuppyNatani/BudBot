@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from branding_client import BrandingAuthenticationRequired, BrandingClientError
 from control_center import BudBotControlCenter, MAX_EVENTS_PER_POLL
-from service_controller import BudBotServiceError
+from service_controller import BudBotServiceController, BudBotServiceError, LOCAL_WIDGET_URL
 
 BUSINESS_ID = "12345678-1234-5678-1234-567812345678"
 PREVIEW_URL = f"http://127.0.0.1:8000/widget/?business_id={BUSINESS_ID}"
@@ -269,6 +269,73 @@ class ControlCenterLifecycleTests(unittest.TestCase):
         center.restart_button.set_enabled.assert_called_once_with(True)
         center.save_button.set_enabled.assert_called_once_with(False)
         showerror.assert_called_once()
+
+    def test_detection_runs_even_without_preview_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            center = make_stateful_center(state="Stopped")
+            center.controller.preview_file = Path(folder) / "missing-preview.txt"
+            center._dispatch_worker = Mock()
+            center._detect_existing_stack()
+            self.assertTrue(center.busy)
+            self.assertEqual(center.state, "Starting")
+            center._dispatch_worker.assert_called_once()
+            self.assertEqual(center._dispatch_worker.call_args.args[0], center._detect_worker)
+
+    def test_running_detection_needs_no_admin_login_or_seed_for_service_status(self) -> None:
+        for cached in (False, True):
+            with self.subTest(cached=cached), tempfile.TemporaryDirectory() as folder:
+                center = make_stateful_center(busy=True)
+                center.controller = BudBotServiceController(Path(folder), cache_dir=Path(folder) / "cache")
+                center.controller.create_demo_business = Mock()
+                center.controller._run = Mock()
+                if cached:
+                    center.controller.preview_file.write_text(PREVIEW_URL + "\n")
+                center._load_business_data = Mock(side_effect=BrandingAuthenticationRequired("Sign in for branding."))
+                center._request_admin_login = Mock(side_effect=lambda pending: center.events.put(("auth_cancelled", pending)))
+                response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+                with patch("service_controller.urlopen", return_value=response), patch("control_center.messagebox.showerror"):
+                    center._detect_worker()
+                    center._poll_events()
+                self.assertEqual(center.state, "Running")
+                self.assertFalse(center.busy)
+                self.assertIsNone(center.business_id)
+                self.assertEqual(center.preview_url, PREVIEW_URL if cached else LOCAL_WIDGET_URL)
+                center.stop_button.set_enabled.assert_called_with(True)
+                center.restart_button.set_enabled.assert_called_with(True)
+                center.open_button.set_enabled.assert_called_with(True)
+                center.save_button.set_enabled.assert_called_with(False)
+                center.controller.create_demo_business.assert_not_called()
+                center.controller._run.assert_not_called()
+                if cached:
+                    self.assertEqual(center.controller.preview_file.read_text().strip(), PREVIEW_URL)
+
+    def test_cacheless_detection_can_load_an_existing_authorized_business(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            center = make_stateful_center(busy=True)
+            center.controller = BudBotServiceController(Path(folder), cache_dir=Path(folder) / "cache")
+            center.controller.create_demo_business = Mock()
+            center._load_business_data = Mock(return_value=(BUSINESS_ID, BUSINESSES, BRANDING, b"", b""))
+            response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+            with patch("service_controller.urlopen", return_value=response):
+                center._detect_worker()
+                center._poll_events()
+            self.assertEqual(center.state, "Running")
+            self.assertEqual(center.preview_url, PREVIEW_URL)
+            self.assertEqual(center.controller.preview_file.read_text().strip(), PREVIEW_URL)
+            center._load_business_data.assert_called_once_with("")
+            center.controller.create_demo_business.assert_not_called()
+
+    def test_stopped_detection_finishes_without_requiring_authentication(self) -> None:
+        center = make_stateful_center(busy=True)
+        center.controller.detect_running.return_value = None
+        center._load_business_data = Mock()
+        center._detect_worker()
+        center._poll_events()
+        self.assertEqual(center.state, "Stopped")
+        self.assertFalse(center.busy)
+        center._load_business_data.assert_not_called()
+        center.start_button.set_enabled.assert_called_once_with(True)
+        center.stop_button.set_enabled.assert_called_once_with(False)
 
     def test_startup_requires_explicit_admin_authentication(self) -> None:
         center = make_center(controller=Mock())

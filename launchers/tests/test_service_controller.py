@@ -4,12 +4,13 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from service_controller import (
     DOCKER_COMMAND_TIMEOUT_SECONDS,
+    LOCAL_WIDGET_URL,
     BudBotServiceController,
     BudBotServiceError,
 )
@@ -139,6 +140,113 @@ class ServiceControllerTests(unittest.TestCase):
         )
         with self.assertRaises(BudBotServiceError):
             BudBotServiceController._business_id_from_url("https://example.com/?business_id=not-a-uuid")
+
+    def test_detection_ignores_protected_business_401_and_preserves_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = self.make_controller(Path(folder))
+            url = "http://127.0.0.1:8000/widget/?business_id=12345678-1234-5678-1234-567812345678"
+            controller.preview_file.write_text(url + "\n")
+            response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+
+            def probe(request, **kwargs):
+                target = request if isinstance(request, str) else request.full_url
+                if "/api/v1/businesses/" in target:
+                    raise HTTPError(target, 401, "Authentication is required.", {}, None)
+                return response
+
+            with patch("service_controller.urlopen", side_effect=probe) as opened:
+                self.assertEqual(controller.detect_running(), url)
+            self.assertEqual(controller.preview_file.read_text(), url + "\n")
+            self.assertEqual([call.args[0] for call in opened.call_args_list],
+                ["http://127.0.0.1:8000/ready", "http://127.0.0.1:8000/widget/"])
+            self.assertTrue(all(call.kwargs["timeout"] == 1.5 for call in opened.call_args_list))
+
+    def test_running_detection_without_cache_never_seeds_or_runs_compose(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = self.make_controller(Path(folder))
+            controller.create_demo_business = Mock()
+            controller._run = Mock()
+            response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+            with patch("service_controller.urlopen", return_value=response):
+                self.assertEqual(controller.detect_running(), LOCAL_WIDGET_URL)
+                # Repeat detection just as closing/reopening Control Center does.
+                self.assertEqual(controller.detect_running(), LOCAL_WIDGET_URL)
+            controller.create_demo_business.assert_not_called()
+            controller._run.assert_not_called()
+            self.assertFalse(controller.preview_file.exists())
+
+    def test_detection_recovers_selected_business_without_preview_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = self.make_controller(Path(folder))
+            business_id = "12345678-1234-5678-1234-567812345678"
+            controller.selected_business_file.write_text(business_id + "\n")
+            response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+            with patch("service_controller.urlopen", return_value=response):
+                self.assertEqual(controller.detect_running(), f"{LOCAL_WIDGET_URL}?business_id={business_id}")
+            self.assertFalse(controller.preview_file.exists())
+            controller.selected_business_file.write_text("not-a-uuid")
+            with patch("service_controller.urlopen", return_value=response):
+                self.assertEqual(controller.detect_running(), LOCAL_WIDGET_URL)
+
+    def test_unavailable_service_returns_stopped_without_erasing_valid_preview(self) -> None:
+        for error in (URLError("connection refused"), HTTPError(LOCAL_WIDGET_URL, 503, "Starting", {}, None)):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as folder:
+                controller = self.make_controller(Path(folder))
+                saved = f"{LOCAL_WIDGET_URL}?business_id=12345678-1234-5678-1234-567812345678\n"
+                controller.preview_file.write_text(saved)
+                with patch("service_controller.urlopen", side_effect=error):
+                    self.assertIsNone(controller.detect_running())
+                self.assertEqual(controller.preview_file.read_text(), saved)
+
+    def test_malformed_or_unsafe_cache_is_discarded_but_not_service_health(self) -> None:
+        business_id = "12345678-1234-5678-1234-567812345678"
+        unsafe = [
+            "not a URL", f"https://example.test/widget/?business_id={business_id}",
+            f"http://user:password@127.0.0.1:8000/widget/?business_id={business_id}",
+            f"http://127.0.0.1:9000/widget/?business_id={business_id}",
+            f"http://127.0.0.1:bad/widget/?business_id={business_id}",
+            f"{LOCAL_WIDGET_URL}?business_id=not-a-uuid", f"{LOCAL_WIDGET_URL}?business_id={business_id}#unsafe",
+            f"{LOCAL_WIDGET_URL}?business_id={business_id}&business_id={business_id}",
+            f"{LOCAL_WIDGET_URL}?business_id={business_id}&extra=data", "x" * 4097,
+        ]
+        for saved in unsafe:
+            with self.subTest(saved=saved[:100]), tempfile.TemporaryDirectory() as folder:
+                controller = self.make_controller(Path(folder))
+                controller.preview_file.write_text(saved)
+                response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+                with patch("service_controller.urlopen", return_value=response) as opened:
+                    self.assertEqual(controller.detect_running(), LOCAL_WIDGET_URL)
+                self.assertFalse(controller.preview_file.exists())
+                self.assertEqual([call.args[0] for call in opened.call_args_list],
+                    ["http://127.0.0.1:8000/ready", LOCAL_WIDGET_URL])
+
+    def test_non_utf8_cache_is_rejected_safely(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = self.make_controller(Path(folder))
+            controller.preview_file.write_bytes(b"\xff")
+            response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+            with patch("service_controller.urlopen", return_value=response):
+                self.assertEqual(controller.detect_running(), LOCAL_WIDGET_URL)
+            self.assertFalse(controller.preview_file.exists())
+
+    def test_widget_probe_failure_preserves_valid_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = self.make_controller(Path(folder))
+            saved = f"{LOCAL_WIDGET_URL}?business_id=12345678-1234-5678-1234-567812345678\n"
+            controller.preview_file.write_text(saved)
+            response = Mock(__enter__=Mock(), __exit__=Mock(return_value=False))
+            with patch("service_controller.urlopen", side_effect=[response, URLError("transient widget failure")]):
+                self.assertIsNone(controller.detect_running())
+            self.assertEqual(controller.preview_file.read_text(), saved)
+
+    def test_restart_stops_then_starts_without_replacing_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            controller = self.make_controller(Path(folder))
+            calls = []
+            controller.stop = Mock(side_effect=lambda: calls.append("stop"))
+            controller.start = Mock(side_effect=lambda: (calls.append("start"), LOCAL_WIDGET_URL)[1])
+            self.assertEqual(controller.restart(), LOCAL_WIDGET_URL)
+            self.assertEqual(calls, ["stop", "start"])
 
     def test_startup_reports_a_backend_container_that_is_restarting(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

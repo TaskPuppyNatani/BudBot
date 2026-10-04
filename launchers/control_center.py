@@ -26,7 +26,7 @@ from branding_client import (
     LocalBrandingClient,
     encode_image_file,
 )
-from service_controller import BudBotServiceController, BudBotServiceError
+from service_controller import BudBotServiceController, BudBotServiceError, LOCAL_WIDGET_URL
 
 COLORS = {
     "background": "#11131b",
@@ -875,7 +875,7 @@ class BudBotControlCenter(tk.Tk):
         self.start_button.set_enabled(not self.busy and self.state not in {"Running", "Starting", "Stopping"})
         self.stop_button.set_enabled(not self.busy and self.state in {"Running", "Error"})
         self.restart_button.set_enabled(not self.busy and self.state in {"Running", "Error"})
-        self.open_button.set_enabled(not self.busy and ready and bool(self.preview_url))
+        self.open_button.set_enabled(not self.busy and self.state == "Running" and bool(self.preview_url))
         self.save_button.set_enabled(not self.busy and ready)
         if self.business_id:
             self.business_combo.configure(state="readonly" if not self.busy else "disabled")
@@ -1061,7 +1061,7 @@ class BudBotControlCenter(tk.Tk):
         operation = pending.get("operation")
         if operation in {"service", "detection"}:
             self.business_id = None
-            self.preview_url = None
+            self.preview_url = pending.get("url") or None
             self._set_status(
                 "Running",
                 "BudBot is running, but branding sign-in was not completed. "
@@ -1258,8 +1258,6 @@ class BudBotControlCenter(tk.Tk):
             self.events.put(("service_done", {"state": "Error", "action": action, "message": f"BudBot could not complete the operation: {exc}"}))
 
     def _detect_existing_stack(self) -> None:
-        if not self.controller.preview_file.is_file():
-            return
         self.busy = True
         self._set_status("Starting", "Checking whether the local BudBot service is already running…")
         self.progress.start(12)
@@ -1277,10 +1275,10 @@ class BudBotControlCenter(tk.Tk):
         try:
             url = self.controller.detect_running()
             if not url:
-                self._log_lifecycle("existing-stack detection found no reachable saved preview")
+                self._log_lifecycle("existing-stack detection found no ready local service")
                 self.events.put(("detected", None))
                 return
-            business_id = self.controller._business_id_from_url(url)
+            business_id = "" if url == LOCAL_WIDGET_URL else self.controller._business_id_from_url(url)
             self._finish_detected_stack(url, business_id)
         except BrandingAuthenticationRequired:
             self.events.put(
@@ -1697,7 +1695,7 @@ class BudBotControlCenter(tk.Tk):
                     "BudBot is running. Sign in to load the branding for a business you can manage.",
                 )
                 self.business_id = None
-                self.preview_url = None
+                self.preview_url = pending.get("url") or None
                 self._refresh_buttons()
             self._request_admin_login(pending)
         elif kind == "auth_complete":
