@@ -14,6 +14,8 @@ class AdminPermission(StrEnum):
     LOCATION_WRITE = "location.write"
     ASSISTANT_READ = "assistant.read"
     ASSISTANT_WRITE = "assistant.write"
+    FAQ_READ = "faq.read"
+    FAQ_WRITE = "faq.write"
     COMPLIANCE_READ = "compliance.read"
     COMPLIANCE_WRITE = "compliance.write"
     BRANDING_READ = "branding.read"
@@ -29,6 +31,7 @@ _READ_PERMISSIONS = frozenset(
         AdminPermission.BUSINESS_READ.value,
         AdminPermission.LOCATION_READ.value,
         AdminPermission.ASSISTANT_READ.value,
+        AdminPermission.FAQ_READ.value,
         AdminPermission.COMPLIANCE_READ.value,
         AdminPermission.BRANDING_READ.value,
     }
@@ -43,6 +46,7 @@ ROLE_PERMISSIONS = MappingProxyType(
                 AdminPermission.BUSINESS_WRITE.value,
                 AdminPermission.LOCATION_WRITE.value,
                 AdminPermission.ASSISTANT_WRITE.value,
+                AdminPermission.FAQ_WRITE.value,
                 AdminPermission.BRANDING_WRITE.value,
             }
         ),

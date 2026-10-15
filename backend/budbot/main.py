@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from budbot.api.errors import install_exception_handlers
 from budbot.api.routes.auth import router as auth_router
+from budbot.api.routes.audit import router as audit_router
 from budbot.api.routes.branding import router as branding_router, published_branding_image
 from budbot.api.routes.assistants import router as assistants_router
 from budbot.api.routes.businesses import router as businesses_router
@@ -18,6 +19,7 @@ from budbot.api.routes.commands import router as commands_router
 from budbot.api.routes.chat import router as chat_router
 from budbot.api.routes.health import router as health_router
 from budbot.api.routes.locations import router as locations_router
+from budbot.api.routes.knowledge import router as knowledge_router
 from budbot.api.routes.local_branding import router as local_branding_router
 from budbot.api.routes.sessions import router as sessions_router
 from budbot.core.config import Settings, get_settings
@@ -63,6 +65,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_exception_handlers(application)
     application.include_router(health_router)
     application.include_router(auth_router)
+    application.include_router(audit_router)
+    application.include_router(knowledge_router)
     application.include_router(branding_router)
     application.include_router(businesses_router)
     application.include_router(locations_router)

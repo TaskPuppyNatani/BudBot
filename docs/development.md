@@ -354,6 +354,43 @@ See `frontend/admin/README.md` for frontend checks and the desktop/browser manua
 acceptance checklist. Provider configuration/secrets, FAQs, audit browsing, admin
 commands and membership management remain outside this pass.
 
+### M9B Pass 2 - FAQ management and audit history
+
+The existing `/admin/` app now has FAQs and Audit History sections. New routes:
+
+- `GET/POST /api/v1/businesses/{business_id}/faqs`
+- `PATCH /api/v1/businesses/{business_id}/faqs/{faq_id}`
+- `GET /api/v1/businesses/{business_id}/audit?limit=50&offset=0`
+
+FAQ reads use `faq.read` (owner/admin/manager/viewer), writes use `faq.write`
+(owner/admin) and CSRF. Audit reads retain owner-only `audit.read`. All paths
+resolve authenticated membership centrally; the customer tenant header grants
+no administrative access. KnowledgeService reuses TenantScopedRepository for
+FAQ/location scope and preserves the existing customer `/faq` resolver. Unsafe
+FAQ writes lock the business row before checking normalized enabled/public
+duplicates, serializing concurrent inserts without a new schema. Draft duplicates
+are allowed but cannot be republished into ambiguity; disabling is the removal
+contract. Responses and safe audit records commit together before publication.
+
+Audit History reuses AuditEvent and projects only stable IDs, event type/time
+and allowlisted safe metadata. FAQ text/raw payloads never enter the audit writer.
+Historical details are filtered again on read. Results exclude other businesses
+and unscoped account-wide auth events, order by timestamp then UUID descending,
+and have bounded limit (1–100) and offset (0–10,000). This is recent-history
+offset browsing; concurrent new entries can shift pages. Existing Pass 1 business,
+location, assistant, branding and compliance mutation events are reused without
+a broad audit retrofit. There is no public audit endpoint or audit-write UI.
+
+No migration is added: existing `faq_entries` and `audit_events` contain all
+needed fields and indexes. The Alembic head remains `0007_m9a_auth_admin`.
+`tests/api/test_m9b_faq_audit.py` covers API/security/customer integration;
+`tests/integration/test_m9b_postgres_faq.py` proves concurrent duplicate rejection
+only when `BUDBOT_TEST_POSTGRES_URL` names an isolated database migrated to head.
+SQLite tests do not prove PostgreSQL locking. See `frontend/admin/README.md` for
+frontend tests and manual acceptance. Provider work, admin slash commands and
+membership management are deferred. The separately recorded expired-session
+direct-GET serialization defect is unchanged.
+
 ### M9 - Admin UI and admin commands
 
 Admin UI must support:

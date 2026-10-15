@@ -11,11 +11,12 @@ const publicRoot = new URL("../public/", import.meta.url);
 const widgetRoot = new URL("../../widget/", import.meta.url);
 const account = token => ({ csrf_token: token, user: { email: "owner@example.test" }, businesses: [
   { business_id: "a", display_name: "Fixture business", role: "owner",
-    permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write"] },
+    permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read"] },
 ] });
 
 async function fixture(t) {
   const calls = []; const widgetNavigations = []; let token = 0;
+  const faqs = []; const audit = [];
   const server = createServer(async (request, response) => {
     const path = new URL(request.url, "http://localhost").pathname;
     if (path === "/favicon.ico") { response.writeHead(204).end(); return; }
@@ -62,6 +63,23 @@ async function fixture(t) {
       send(401, { detail: "Authentication is required." }); return;
     }
     if (path === "/api/v1/auth/me") { send(200, account(String(++token))); return; }
+    if (path === "/api/v1/businesses/a/audit") { send(200, { items: audit, next_offset: null }); return; }
+    if (path === "/api/v1/businesses/a/faqs" || path === "/api/v1/businesses/a/faqs/faq-one") {
+      if (request.method === "GET") { send(200, faqs); return; }
+      if (request.headers["x-csrf-token"] !== String(token)) {
+        send(403, { detail: "A valid CSRF token is required for this request." }); return;
+      }
+      let text = ""; for await (const chunk of request) text += chunk;
+      const payload = JSON.parse(text);
+      const created = request.method === "POST";
+      if (created) faqs.push({ id: "faq-one", ...payload });
+      else Object.assign(faqs[0], payload);
+      audit.unshift({ id: `audit-${audit.length}`, created_at: "2026-01-01T00:00:00Z",
+        actor_user_id: "owner-id", resource_type: "faq", resource_id: "faq-one",
+        event_type: created ? "admin.faq.created" : "admin.faq.updated",
+        details: { enabled: payload.enabled, is_public: payload.is_public } });
+      send(created ? 201 : 200, faqs[0]); return;
+    }
     if (path === "/api/v1/auth/logout" && request.method === "POST") {
       if (request.headers["x-csrf-token"] !== String(token)) {
         send(403, { detail: "A valid CSRF token is required for this request." }); return;
@@ -184,5 +202,34 @@ test("customer preview opens the selected widget with no opener/referrer or admi
   assert.deepEqual(calls.map(call => call.path), ["/api/v1/sessions", "/api/v1/sessions/customer-fixture/widget"]);
   assert.ok(calls.every(call => call.hasAdminCookie === false && call.hasCsrfHeader === false && call.businessId === "a"));
   assert.deepEqual(calls[0].payload, {});
+  assert.deepEqual(pageErrors, []);
+});
+
+test("native FAQ editing and audit navigation preserve CSRF, text rendering and reload", async t => {
+  const { page, pageErrors, calls } = await fixture(t);
+  await signIn(page);
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  await page.getByRole("button", { name: "FAQs", exact: true }).click();
+  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
+  const question = '<img src=x onerror="window.faqInjection=true">';
+  await page.getByLabel("Question", { exact: true }).fill(question);
+  await page.getByLabel("Answer", { exact: true }).fill("Use the main lot.");
+  await page.getByRole("button", { name: "Create FAQ", exact: true }).click();
+  await page.getByRole("heading", { name: question, exact: true }).waitFor();
+  assert.equal(await page.locator("article img").count(), 0);
+  assert.equal(await page.evaluate(() => window.faqInjection), undefined);
+  await page.getByRole("button", { name: "Edit FAQ", exact: true }).click();
+  await page.getByLabel("Answer", { exact: true }).fill("Use the updated lot.");
+  await page.getByLabel("FAQ enabled", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Save FAQ", exact: true }).click();
+  await page.getByText("Business-wide · Disabled · Public", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Reload settings", exact: true }).click();
+  await page.getByText("Use the updated lot.", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Audit History", exact: true }).click();
+  await page.getByRole("heading", { name: "admin.faq.updated", exact: true }).waitFor();
+  assert.equal(await page.locator("form").count(), 0);
+  assert.equal(await page.getByRole("heading", { name: "admin.faq.created", exact: true }).count(), 1);
+  assert.ok(calls.some(call => call.path.endsWith("/faqs") && call.method === "POST" && call.status === 201));
+  assert.ok(calls.some(call => call.path.endsWith("/faqs/faq-one") && call.method === "PATCH" && call.status === 200));
   assert.deepEqual(pageErrors, []);
 });

@@ -87,6 +87,12 @@ and branding, plus read compliance; `manager` can read those areas and update
 locations; `viewer` has read-only access. Unknown roles have no permissions.
 Membership rows do not grant access to any other business.
 
+M9B Pass 2 adds dedicated `faq.read` to these four roles and `faq.write` to
+owner/admin. Managers retain location-only write access. `audit.read` remains
+owner-only. FAQ management extends KnowledgeService/FAQEntry; customer FAQ
+resolution stays separate. The dashboard's audit reader reuses AuditEvent with
+tenant filtering and a restricted metadata projection, not raw JSON serialization.
+
 `X-BudBot-Business-ID` remains a customer/development tenant selector. It never
 authenticates or authorizes administrative requests. First-owner setup is a
 one-time local CLI operation, not an HTTP registration route; the database's

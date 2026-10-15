@@ -12,6 +12,7 @@ def test_roles_grant_only_the_documented_administrative_permissions() -> None:
         AdminPermission.BUSINESS_READ.value,
         AdminPermission.LOCATION_READ.value,
         AdminPermission.ASSISTANT_READ.value,
+        AdminPermission.FAQ_READ.value,
         AdminPermission.COMPLIANCE_READ.value,
         AdminPermission.BRANDING_READ.value,
     }
@@ -26,11 +27,15 @@ def test_roles_grant_only_the_documented_administrative_permissions() -> None:
         AdminPermission.BUSINESS_WRITE.value,
         AdminPermission.LOCATION_WRITE.value,
         AdminPermission.ASSISTANT_WRITE.value,
+        AdminPermission.FAQ_WRITE.value,
         AdminPermission.BRANDING_WRITE.value,
     } <= admin
     assert AdminPermission.COMPLIANCE_WRITE.value not in admin
     assert AdminPermission.MEMBERSHIP_MANAGE.value not in admin
     assert AdminPermission.PROVIDER_WRITE.value not in admin
+    assert AdminPermission.AUDIT_READ.value not in admin
+    assert not role_allows("manager", AdminPermission.FAQ_WRITE)
+    assert not role_allows("viewer", AdminPermission.FAQ_WRITE)
 
     owner = permissions_for_role("owner")
     assert owner == frozenset(permission.value for permission in AdminPermission)

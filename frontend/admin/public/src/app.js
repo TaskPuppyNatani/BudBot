@@ -8,6 +8,7 @@ export class AdminApp {
     this.busy = false; this.dirty = false; this.tab = "Business";
     this.businessId = null; this.locationId = null; this.newLocation = false;
     this.message = ""; this.failed = false;
+    this.resetManagementData();
   }
   node(tag, text = "", attributes = {}) {
     const node = this.document.createElement(tag);
@@ -116,6 +117,8 @@ export class AdminApp {
     });
   }
   async loadBusiness(id = this.businessId, selectedLocation = this.locationId) {
+    this.resetManagementData();
+    if (this.managementPanel) this.managementPanel.replaceChildren(this.node("p", "Loading selected business…"));
     const base = `/api/v1/businesses/${encodeURIComponent(id)}`;
     const [business, assistant, locations, compliance] = await Promise.all([
       this.api.request(base), this.api.request(`${base}/assistant`),
@@ -125,6 +128,27 @@ export class AdminApp {
     const detail = location ? await this.locationData(base, location.id) : {};
     Object.assign(this, { businessId: id, business, assistant, locations, compliance, locationId: location?.id || null, ...detail });
     this.newLocation = false; this.dirty = false;
+    await this.loadManagementPanel();
+  }
+  resetManagementData() {
+    this.faqs = []; this.editFaqId = null; this.auditPage = null;
+    this.auditOffset = 0; this.panelError = ""; this.panelLoaded = false;
+  }
+  async loadManagementPanel(offset = 0) {
+    const id = this.businessId;
+    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : null;
+    this.panelError = ""; this.panelLoaded = false;
+    if (!permission || !this.api.can(id, permission)) return;
+    try {
+      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : `/audit?limit=25&offset=${offset}`));
+      if (id !== this.businessId) return;
+      if (this.tab === "FAQs") this.faqs = result;
+      else { this.auditPage = result; this.auditOffset = offset; }
+      this.panelLoaded = true;
+    } catch (error) {
+      if (error.status === 401) throw error;
+      this.panelError = error.message || "Could not load this section. Reload settings to retry.";
+    }
   }
   async locationData(base, id) {
     const [override, effectiveAssistant, effectiveCompliance] = await Promise.all([
@@ -135,6 +159,7 @@ export class AdminApp {
     return { override, effectiveAssistant, effectiveCompliance };
   }
   renderLogin() {
+    this.resetManagementData(); this.managementPanel = null;
     this.controls = []; this.businessSelect = null; this.locationSelect = null;
     const form = this.node("form", "", { className: "card login" });
     form.append(this.node("h1", "Sign in to BudBot"), this.node("p", "Use your owner or authorized business account. Browser sign-in is separate from Control Center."));
@@ -186,10 +211,15 @@ export class AdminApp {
       this.root.replaceChildren(fragment); this.updateControls(); return;
     }
     const nav = this.node("nav", "", { "aria-label": "Management sections" });
-    for (const title of ["Business", "Locations", "Assistant", "Compliance", "Branding"]) {
+    for (const title of ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History"]) {
       const button = this.button(title, () => {
         if (!this.discard()) return;
-        this.dirty = false; this.tab = title; this.render();
+        this.dirty = false; this.tab = title;
+        if (["FAQs", "Audit History"].includes(title)) return this.run(async () => {
+          this.resetManagementData(); this.render();
+          await this.loadManagementPanel(); this.render();
+        });
+        this.render();
       });
       if (title === this.tab) button.setAttribute("aria-current", "page");
       nav.append(button);
@@ -209,8 +239,10 @@ export class AdminApp {
       });
       fragment.append(selection);
     }
-    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm" };
-    fragment.append(this[builders[this.tab]]());
+    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView" };
+    const panel = this[builders[this.tab]]();
+    this.managementPanel = ["FAQs", "Audit History"].includes(this.tab) ? panel : null;
+    fragment.append(panel);
     this.root.replaceChildren(fragment); this.updateControls(); this.notice();
   }
   listEditor(parent, title, entries, keys, permission) {
@@ -228,6 +260,75 @@ export class AdminApp {
     section.append(this.button("Add entry", () => { add({}); this.dirty = true; }, permission));
     parent.append(section);
     return () => rows.map(({ fields }) => Object.fromEntries(Object.entries(fields).map(([key, input]) => [key, input.value.trim() || (key === "details" ? null : "")])));
+  }
+  managementSection(title, permission) {
+    const section = this.node("section", "", { className: "card" });
+    section.append(this.node("h2", title));
+    if (!this.api.can(this.businessId, permission)) {
+      section.append(this.node("p", "You do not have permission to view this section."));
+    } else if (this.panelError) section.append(this.node("p", this.panelError, { role: "alert" }));
+    else if (!this.panelLoaded) section.append(this.node("p", "Loading…"));
+    return section;
+  }
+  faqView() {
+    const section = this.managementSection("FAQ management", "faq.read");
+    if (!this.api.can(this.businessId, "faq.read") || !this.panelLoaded) return section;
+    section.append(this.node("p", "Only enabled, public entries reach customers. Matching location questions override business-wide answers. Disable an entry to remove it from customer lookup; records are retained."));
+    if (!this.faqs.length) section.append(this.node("p", "No FAQs yet."));
+    for (const entry of this.faqs) {
+      const card = this.node("article", "", { className: "card" });
+      const scope = entry.location_id ? this.locations.find(item => item.id === entry.location_id)?.display_name || entry.location_id : "Business-wide";
+      card.append(this.node("h3", entry.question), this.node("p", entry.answer),
+        this.node("p", `${scope} · ${entry.enabled ? "Enabled" : "Disabled"} · ${entry.is_public ? "Public" : "Non-public"}`));
+      card.append(this.button("Edit FAQ", () => {
+        if (!this.discard()) return;
+        this.editFaqId = entry.id; this.dirty = false; this.render();
+      }, "faq.write"));
+      section.append(card);
+    }
+    section.append(this.button("New FAQ", () => {
+      if (!this.discard()) return;
+      this.editFaqId = null; this.dirty = false; this.render();
+    }, "faq.write"));
+    const entry = this.faqs.find(item => item.id === this.editFaqId);
+    let question, answer, location, enabled, isPublic;
+    const permission = "faq.write";
+    const form = this.form(entry ? "Edit FAQ" : "New FAQ", permission, async () => {
+      const payload = { question: question.value.trim(), answer: answer.value.trim(),
+        location_id: location.value || null, enabled: enabled.checked, is_public: isPublic.checked };
+      await this.api.mutate(this.path(entry ? `/faqs/${entry.id}` : "/faqs"), entry ? "PATCH" : "POST", payload);
+      this.dirty = false; this.editFaqId = null;
+      await this.loadManagementPanel(); this.render();
+    });
+    question = this.field(form, "Question", entry?.question, { permission, required: true, maxLength: 500 });
+    answer = this.field(form, "Answer", entry?.answer, { permission, required: true, type: "textarea", maxLength: 10000 });
+    location = this.field(form, "FAQ scope", entry?.location_id || "", { permission,
+      options: [["", "Business-wide"], ...this.locations.map(item => [item.id, `${item.display_name}${item.active ? "" : " (inactive)"}`])] });
+    enabled = this.field(form, "FAQ enabled", entry?.enabled ?? true, { permission, type: "checkbox" });
+    isPublic = this.field(form, "Public to customers", entry?.is_public ?? true, { permission, type: "checkbox" });
+    this.saveButton(form, permission, entry ? "Save FAQ" : "Create FAQ");
+    section.append(form); return section;
+  }
+  auditView() {
+    const section = this.managementSection("Audit History", "audit.read");
+    if (!this.api.can(this.businessId, "audit.read") || !this.panelLoaded) return section;
+    section.append(this.node("p", "Business-scoped administrative history, newest first. Account-wide login/logout events are not attributed to a business and are excluded. Actor identifiers are account IDs."));
+    if (!this.auditPage.items.length) section.append(this.node("p", "No audit events for this business."));
+    for (const event of this.auditPage.items) {
+      const card = this.node("article", "", { className: "card" });
+      card.append(this.node("h3", event.event_type), this.node("p", event.created_at),
+        this.node("p", `Actor: ${event.actor_user_id || "Unavailable"}`),
+        this.node("p", `Resource: ${event.resource_type || "Unavailable"} ${event.resource_id || ""}`));
+      for (const [key, value] of Object.entries(event.details || {})) card.append(this.node("p", `${key}: ${value ?? "Business-wide"}`));
+      section.append(card);
+    }
+    const page = offset => this.run(async () => {
+      this.auditPage = null; this.panelLoaded = false; this.render();
+      await this.loadManagementPanel(offset); this.render();
+    });
+    if (this.auditOffset > 0) section.append(this.button("Newest events", () => page(0), "audit.read"));
+    if (this.auditPage.next_offset !== null) section.append(this.button("Older events", () => page(this.auditPage.next_offset), "audit.read"));
+    return section;
   }
   businessForm() {
     const permission = "business.write"; let fields, flags, payments, policies;

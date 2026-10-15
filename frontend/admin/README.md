@@ -1,4 +1,4 @@
-# BudBot administration (M9B Pass 1)
+# BudBot administration (M9B Passes 1 and 2)
 
 A separate, dependency-free ES-module application served at `/admin/` by the
 backend. Only `public/` is served or copied into the runtime Docker image. Tests
@@ -102,6 +102,52 @@ branding-image fetches use `credentials: "omit"`.
     save. Direct requests still require membership and valid CSRF regardless of
     the visible controls or `X-BudBot-Business-ID`.
 
-Provider settings/credentials/tests, FAQ management, audit browsing, admin commands
-and account/membership management are reserved for later passes. Control Center
-can remain unchanged: open the admin URL manually.
+## Pass 2: FAQs and audit history
+
+The FAQs section lists all business-owned entries, including disabled and
+non-public drafts. Owners/admins can create or edit question (1–500 characters),
+answer (1–10,000), business-wide/location scope, enabled and public state.
+Managers/viewers can read. Scope choices include only this business's locations.
+There is no hard-delete action: disable an entry to retain its configuration and
+history while removing it from customer lookup. A non-public entry is also hidden
+from customers. Location matches override business-wide entries using the existing
+case/whitespace normalization. Duplicate enabled/public questions in the same scope
+are rejected, including when republishing a draft or changing scope. Duplicate
+disabled/private drafts remain editable, so legacy ambiguity can be resolved.
+
+Audit History is owner-only under the existing `audit.read` policy. It shows
+business events in descending timestamp/ID order, 25 per page, with Newest/Older
+controls. The API allows 1–100 rows and offsets 0–10,000; offset pagination is a
+recent-history browser, not a consistent snapshot/export while new events arrive.
+Actor and resource identifiers are displayed without exposing account profiles.
+Account-wide login/logout events have no business attribution and are excluded.
+Only recognized safe metadata is returned, never arbitrary stored details or FAQ
+content. Opening a section does not record a mutation. Business changes, logout
+and session expiry clear prior FAQ/audit state; neither panel is polled.
+
+### Pass 2 manual acceptance
+
+1. Sign in as owner, choose the intended business, open **FAQs**, and create a
+   business-wide `Parking?` / `Use the main lot.` entry, enabled and public.
+2. Open **Customer preview**, complete normal location/age checks as needed,
+   and run `/faq parking?`. Confirm the configured answer.
+3. Edit the answer, save, and repeat the customer search. Confirm the new answer.
+4. Disable the entry or make it non-public. Confirm it disappears from `/faq`
+   and `/faq parking?` returns no match. Re-enable/publish it for the next check.
+5. Add a second FAQ with the same normalized question for one location and a
+   different answer. Select that location in preview; confirm its answer wins.
+   Disable the override and confirm the business-wide answer returns. A duplicate
+   enabled/public question in the same scope must be rejected with a useful error.
+6. Open **Audit History**. Confirm FAQ create/edit/state events, actor/resource
+   IDs and safe state metadata appear, with no question/answer text. Check paging
+   if more than 25 events exist; empty history should be clear.
+7. Reload the page and sign out/in. Confirm saved FAQ and audit state persists.
+8. If the account already has multiple memberships, switch businesses in both
+   sections. Prior tenant content must disappear while loading and never appear
+   in the other business's results. No database editing is needed.
+9. With existing admin/manager/viewer accounts, confirm the permissions above.
+   Denied operations must show useful errors; UI visibility does not grant access.
+
+Provider settings/credentials/tests, administrative slash commands and
+account/membership management remain reserved for later passes. Control Center
+is unchanged: open the admin URL manually. No Pass 3 provider work is included.

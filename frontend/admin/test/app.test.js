@@ -21,18 +21,22 @@ const all = node => [node, ...node.children.flatMap(all)];
 const button = (root, text) => all(root).find(node => node.tagName === "button" && node.textContent === text);
 const field = (root, text) => all(root).find(node => node.tagName === "label" && node.children[0]?.textContent === text)?.children[1];
 const form = (root, title) => all(root).find(node => node.tagName === "form" && node.children[0]?.textContent === title);
-function setup(permissions = ["business.read", "business.write", "location.write", "assistant.write", "branding.write"]) {
+function setup(permissions = ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read"]) {
   const document = { createElement: tag => new Element(tag, document) };
   const root = document.createElement("main"); const writes = []; const opened = [];
-  const account = { user: { email: "owner@example.test" }, businesses: [{ business_id: "a", display_name: "<script>business</script>", role: "owner", permissions }, { business_id: "b", display_name: "Second business", role: "viewer", permissions: ["business.read"] }] };
+  const account = { user: { email: "owner@example.test" }, businesses: [{ business_id: "a", display_name: "<script>business</script>", role: "owner", permissions }, { business_id: "b", display_name: "Second business", role: "viewer", permissions: ["business.read", "faq.read"] }] };
   const business = { id: "a", display_name: "<script>business</script>", industry: "general_retail", active: true, default_timezone: "UTC", products_enabled: true, promotions_enabled: true };
   const assistant = { display_name: "Assistant", greeting: "Hello", fallback_message: "Ask staff", enabled: true };
   const location = { id: "loc", display_name: "Main", active: true, hours: [], timezone: "UTC" };
+  const faqs = { a: [], b: [{ id: "faq-b", question: "Second tenant question", answer: "Second tenant answer", location_id: null, enabled: true, is_public: true }] };
   const api = {
     session: null, restore: async function () { this.session = structuredClone(account); return this.session; },
     login: async function () { this.session = structuredClone(account); return this.session; }, logout: async function () { this.session = null; },
     can: function (id, permission) { return this.session?.businesses.find(item => item.business_id === id)?.permissions.includes(permission) || false; },
     request: async path => {
+      const id = path.split("/")[4];
+      if (path.endsWith("/faqs")) return structuredClone(faqs[id]);
+      if (path.includes("/audit?")) return { items: [], next_offset: null };
       if (path.endsWith("assistant-override")) return null;
       if (path.endsWith("effective-assistant")) return structuredClone(assistant);
       if (path.includes("compliance-profile/locations")) return { status: "resolved", location_active: true, profile: { profile_id: "general_retail" } };
@@ -41,7 +45,16 @@ function setup(permissions = ["business.read", "business.write", "location.write
       if (path.includes("/locations?")) return [structuredClone(location)];
       return { ...structuredClone(business), id: path.split("/").at(-1) };
     },
-    mutate: async (path, method, payload) => { writes.push({ path, method, payload }); Object.assign(business, payload); return { id: "loc" }; },
+    mutate: async (path, method, payload) => {
+      writes.push({ path, method, payload });
+      if (path.includes("/faqs")) {
+        const entries = faqs[path.split("/")[4]];
+        if (method === "POST") entries.push({ id: `faq-${entries.length}`, ...payload });
+        else Object.assign(entries.find(item => item.id === path.split("/").at(-1)), payload);
+        return {};
+      }
+      Object.assign(business, payload); return { id: "loc" };
+    },
   };
   const app = new AdminApp(root, api, { confirm: () => true, open: (...args) => opened.push(args) });
   return { root, app, api, writes, opened };
@@ -202,4 +215,134 @@ test("failed initial settings load retains authorized selection for retry", asyn
   field(root, "Business").dispatch("change"); await app.task;
   assert.equal(app.businessId, "a");
   assert.ok(button(root, "Save changes"));
+});
+
+test("FAQ forms create, edit, scope and disable public customer entries as text", async () => {
+  const { root, app, writes } = setup(); await app.start();
+  button(root, "FAQs").dispatch("click"); await app.task;
+  assert.ok(root.textContent.includes("No FAQs yet."));
+  field(root, "Question").value = "<img onerror=alert(1)> parking?";
+  field(root, "Answer").value = "First answer";
+  form(root, "New FAQ").dispatch("submit"); await app.task;
+  assert.equal(writes[0].path, "/api/v1/businesses/a/faqs");
+  assert.equal(writes[0].method, "POST");
+  assert.equal(writes[0].payload.location_id, null);
+  assert.ok(root.textContent.includes("<img onerror=alert(1)> parking?"));
+  assert.equal(all(root).filter(node => node.tagName === "img").length, 0);
+  button(root, "Edit FAQ").dispatch("click");
+  assert.equal(field(root, "Answer").value, "First answer");
+  field(root, "Answer").value = "Local answer";
+  field(root, "FAQ scope").value = "loc";
+  field(root, "FAQ enabled").checked = false;
+  field(root, "Public to customers").checked = false;
+  form(root, "Edit FAQ").dispatch("submit"); await app.task;
+  assert.equal(writes[1].method, "PATCH");
+  assert.equal(writes[1].payload.location_id, "loc");
+  assert.equal(writes[1].payload.enabled, false);
+  assert.equal(writes[1].payload.is_public, false);
+  assert.match(root.textContent, /Main · Disabled · Non-public/);
+  assert.equal(app.busy, false);
+});
+
+test("FAQ validation errors retain edits and release controls; reload and relogin preserve saved data", async () => {
+  const { root, app, api } = setup(); await app.start();
+  button(root, "FAQs").dispatch("click"); await app.task;
+  field(root, "Question").value = "Parking?"; field(root, "Answer").value = "Original";
+  form(root, "New FAQ").dispatch("submit"); await app.task;
+  button(root, "Edit FAQ").dispatch("click");
+  const mutate = api.mutate;
+  api.mutate = async () => { throw new ApiError(409, "An enabled public FAQ with this question already exists in this scope."); };
+  field(root, "Answer").value = "Keep this edit";
+  form(root, "Edit FAQ").dispatch("submit"); await app.task;
+  assert.equal(field(root, "Answer").value, "Keep this edit");
+  assert.match(app.message, /already exists/);
+  assert.equal(button(root, "Save FAQ").disabled, false);
+  api.mutate = mutate;
+  button(root, "Reload settings").dispatch("click"); await app.task;
+  assert.ok(root.textContent.includes("Original"));
+  button(root, "Sign out").dispatch("click"); await app.task;
+  assert.deepEqual(app.faqs, []); assert.equal(app.auditPage, null);
+  form(root, "Sign in to BudBot").dispatch("submit"); await app.task;
+  assert.ok(root.textContent.includes("Original"));
+});
+
+test("business switching clears FAQ state immediately, including during a failed load", async () => {
+  const { root, app, api } = setup(); await app.start();
+  button(root, "FAQs").dispatch("click"); await app.task;
+  field(root, "Question").value = "First tenant only"; field(root, "Answer").value = "Private first tenant answer";
+  form(root, "New FAQ").dispatch("submit"); await app.task;
+  const request = api.request; let release;
+  api.request = async path => path === "/api/v1/businesses/b" ? new Promise(resolve => { release = () => resolve({ id: "b", display_name: "Second" }); }) : request(path);
+  field(root, "Business").value = "b"; field(root, "Business").dispatch("change");
+  assert.ok(!root.textContent.includes("Private first tenant answer"));
+  assert.deepEqual(app.faqs, []);
+  release(); await app.task;
+  assert.ok(root.textContent.includes("Second tenant question"));
+  assert.ok(!root.textContent.includes("First tenant only"));
+  assert.equal(button(root, "Create FAQ").disabled, true);
+  api.request = async path => path.endsWith("/faqs") ? Promise.reject(new ApiError(403, "FAQ access denied.")) : request(path);
+  field(root, "Business").value = "a"; field(root, "Business").dispatch("change"); await app.task;
+  assert.ok(root.textContent.includes("FAQ access denied."));
+  assert.ok(!root.textContent.includes("Second tenant answer"));
+});
+
+test("FAQ and audit permissions gate reads and writes independently", async () => {
+  for (const permissions of [["business.read"], ["business.read", "faq.read"]]) {
+    const { root, app, api, writes } = setup(permissions); await app.start();
+    const calls = []; const request = api.request;
+    api.request = async path => { calls.push(path); return request(path); };
+    button(root, "FAQs").dispatch("click"); await app.task;
+    if (permissions.includes("faq.read")) {
+      assert.equal(button(root, "Create FAQ").disabled, true);
+      form(root, "New FAQ").dispatch("submit");
+    } else assert.match(root.textContent, /do not have permission/);
+    assert.equal(writes.length, 0);
+    button(root, "Audit History").dispatch("click"); await app.task;
+    assert.match(root.textContent, /do not have permission/);
+    assert.ok(!calls.some(path => path.includes("/audit")));
+    assert.equal(calls.length, permissions.includes("faq.read") ? 1 : 0);
+  }
+});
+
+test("audit history is read-only text, handles empty history and paginates within one business", async () => {
+  const { root, app, api, writes } = setup(); await app.start();
+  button(root, "Audit History").dispatch("click"); await app.task;
+  assert.match(root.textContent, /No audit events/);
+  const request = api.request;
+  const calls = [];
+  api.request = async path => {
+    if (!path.includes("/audit?")) return request(path);
+    calls.push(path);
+    return { items: [{ event_type: "admin.faq.updated", created_at: "2026-01-01T00:00:00Z", actor_user_id: "actor-id", resource_type: "faq", resource_id: "faq-id",
+      details: { changed_fields: "<script>untrusted</script>" } }], next_offset: path.endsWith("offset=0") ? 25 : null };
+  };
+  button(root, "Reload settings").dispatch("click"); await app.task;
+  assert.ok(root.textContent.includes("<script>untrusted</script>"));
+  assert.ok(root.textContent.includes("actor-id"));
+  assert.equal(all(root).filter(node => node.tagName === "form").length, 0);
+  button(root, "Older events").dispatch("click"); await app.task;
+  assert.ok(calls[1].endsWith("offset=25"));
+  button(root, "Newest events").dispatch("click"); await app.task;
+  assert.ok(calls[2].endsWith("offset=0"));
+  field(root, "Business").value = "b"; field(root, "Business").dispatch("change"); await app.task;
+  assert.ok(!root.textContent.includes("actor-id"));
+  assert.equal(app.auditPage, null);
+  assert.match(root.textContent, /do not have permission/);
+  assert.equal(writes.length, 0);
+});
+
+test("audit load authorization errors are actionable and expired sessions clear both panels", async () => {
+  const { root, app, api } = setup(); await app.start();
+  const request = api.request;
+  api.request = async path => {
+    if (path.includes("/audit?")) throw new ApiError(403, "Audit access denied.");
+    return request(path);
+  };
+  button(root, "Audit History").dispatch("click"); await app.task;
+  assert.match(root.textContent, /Audit access denied/);
+  assert.equal(app.busy, false);
+  api.request = async () => { api.session = null; throw new ApiError(401, "Please sign in again."); };
+  button(root, "Reload settings").dispatch("click"); await app.task;
+  assert.ok(button(root, "Sign in"));
+  assert.deepEqual(app.faqs, []); assert.equal(app.auditPage, null);
 });

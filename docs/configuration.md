@@ -179,6 +179,14 @@ the same business. Only enabled/public rows are exposed; for the selected locati
 matching normalized question overrides the business-wide entry. Matching is exact-first
 then case-insensitive substring search, not semantic retrieval.
 
+M9B Pass 2 exposes authenticated FAQ management in `/admin/`. Questions are
+trimmed and bounded to 1–500 characters; answers to 1–10,000. An enabled/public
+question must be unique after case/whitespace normalization within its exact
+business-wide or location scope. Disabled/non-public drafts may duplicate but
+cannot be enabled/published into ambiguity. Disable instead of deleting entries.
+Changing public/enabled/scope state uses the same CSRF and membership checks as
+other admin writes. Customer sessions and compliance checks are unchanged.
+
 ## Product/catalog configuration
 
 V1 must define the capability even though production POS integrations are deferred.
