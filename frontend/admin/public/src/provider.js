@@ -5,7 +5,7 @@ export const PROVIDER_LABELS = Object.freeze({
 });
 
 export const CONNECTION_MESSAGES = Object.freeze({
-  AI_CONNECTION_OK: "Connected successfully. The saved model accepted a small request in BudBot's response format.",
+  AI_CONNECTION_OK: "Connected successfully. The saved configuration accepted a small request in BudBot's response format. If the compatible endpoint supports model discovery, the configured model ID was also checked.",
   AI_DISABLED: "AI is disabled for this business or deployment. Enable the saved configuration before testing.",
   AI_CONFIGURATION_INVALID: "Provider configuration is incomplete or its stored credential cannot be read. Review saved settings and ask the deployment operator to check the private root-key configuration.",
   AI_CREDENTIAL_MISSING: "This provider requires a stored credential. Set the credential, then enable AI and test again.",

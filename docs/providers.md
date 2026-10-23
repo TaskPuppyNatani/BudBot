@@ -271,14 +271,22 @@ providers require a stored credential; legacy/global credentials are never used
 by this action.
 
 The test reuses `ProviderService.runtime()` and the existing provider/harness
-registries. It sends one fixed short user prompt with no tools, at most 16 output
-tokens, a maximum 10-second operation timeout and a maximum 3-second connect
-timeout (smaller configured limits still apply). It may incur a minimal provider
-charge or load a local model. There are no provider retries, discovery requests,
-customer sessions, chat history, or business configuration writes. A successful
-response verifies transport/authentication/model request acceptance and response
-decoding; it does not prove tool calling or customer-answer quality. A cold local
-model may need to be loaded before retrying a timeout.
+registries. For a saved OpenAI-compatible profile it first requests the saved
+endpoint's standard `/models` resource, using the stored credential when present.
+The bounded discovery request has a 2-second timeout; if a valid model list is
+returned, the configured model ID must match exactly. A clear unsupported response
+(HTTP 404, 405 or 501) falls through to the generation check so compatible servers
+without model discovery still work. Malformed lists and other failures produce a
+fixed diagnostic code without exposing response text. The test then sends one
+fixed short user prompt with no tools, at most 16 output tokens, within a maximum
+10-second overall operation timeout and a maximum 3-second connect timeout
+(smaller configured limits still apply). It may incur a minimal provider charge
+or load a local model. There are no provider retries, customer sessions, chat
+history, or business configuration writes. A successful result means the
+configuration accepted a small request in BudBot's response format; compatible
+model identity is confirmed when model discovery is supported. It does not prove
+tool calling or customer-answer quality. A cold local model may need to be loaded
+before retrying a timeout.
 
 The response contains only the saved provider/model identity and one stable code:
 `AI_CONNECTION_OK`, `AI_DISABLED`, `AI_CONFIGURATION_INVALID`,

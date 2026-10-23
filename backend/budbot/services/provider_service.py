@@ -70,7 +70,12 @@ class ProviderService:
             except Exception:
                 code = Code.CONFIGURATION_INVALID
             else:
-                code = await diagnose_connection(config, providers, harnesses)
+                code = await diagnose_connection(
+                    config,
+                    providers,
+                    harnesses,
+                    check_model_discovery=profile.provider == "openai_compatible",
+                )
         return ProviderConnectionRead(code=code,
             provider=profile.provider if profile and profile.provider in {"openrouter", "openai_compatible", "openai", "anthropic"} else None,
             model=profile.model if profile else None)

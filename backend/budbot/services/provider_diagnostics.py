@@ -12,10 +12,17 @@ from budbot.providers.ai.harness_registry import AIHarnessRegistry
 from budbot.schemas.provider import ProviderDiagnosticCode as Code
 
 TEST_TIMEOUT_SECONDS = 10
+MODEL_DISCOVERY_TIMEOUT_SECONDS = 2
 TEST_MAX_OUTPUT_TOKENS = 16
 
 
-async def diagnose_connection(config: AIProviderConfig, providers: AIProviderRegistry, harnesses: AIHarnessRegistry) -> Code:
+async def diagnose_connection(
+    config: AIProviderConfig,
+    providers: AIProviderRegistry,
+    harnesses: AIHarnessRegistry,
+    *,
+    check_model_discovery: bool = False,
+) -> Code:
     """Use the same trusted transport/harness pair as customer AI, without tools."""
     try:
         config = replace(config, timeout_seconds=min(config.timeout_seconds, TEST_TIMEOUT_SECONDS),
@@ -25,9 +32,21 @@ async def diagnose_connection(config: AIProviderConfig, providers: AIProviderReg
         request = AIRequest(messages=(AIMessage(AIMessageRole.USER, "Reply OK."),),
             model=config.model, harness=config.harness,
             generation=GenerationOptions(max_output_tokens=TEST_MAX_OUTPUT_TOKENS))
+        provider = providers.resolve(config.provider)
         async with asyncio.timeout(config.timeout_seconds):
-            response = await providers.resolve(config.provider).generate(
-                request, config, harnesses.resolve(config.harness))
+            if check_model_discovery and config.provider == "openai_compatible":
+                discover = getattr(provider, "available_models", None)
+                if not callable(discover):
+                    return Code.PROVIDER_ERROR
+                discovery_config = replace(
+                    config,
+                    timeout_seconds=min(config.timeout_seconds, MODEL_DISCOVERY_TIMEOUT_SECONDS),
+                    connect_timeout_seconds=min(config.connect_timeout_seconds, 1),
+                )
+                models = await discover(discovery_config)
+                if models is not None and config.model not in models:
+                    return Code.MODEL_UNAVAILABLE
+            response = await provider.generate(request, config, harnesses.resolve(config.harness))
         # Unsolicited tool requests are incompatible; never execute them.
         return Code.INCOMPATIBLE_RESPONSE if response.tool_calls else Code.OK
     except AIError as error:

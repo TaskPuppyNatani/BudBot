@@ -33,25 +33,31 @@ async def diagnostics(m2_client, application, db_session):
     m2_client.headers["X-CSRF-Token"] = me["csrf_token"]
     bid = UUID(me["businesses"][0]["business_id"])
     f = SimpleNamespace(client=m2_client, db=db_session, settings=settings, bid=bid,
-        path=f"/api/v1/businesses/{bid}/provider", requests=[], status=200, failure=None, payload=None)
+        path=f"/api/v1/businesses/{bid}/provider", requests=[], status=200, failure=None, payload=None,
+        model_status=200, model_payload=None)
 
     async def respond(request):
         f.requests.append(request)
         if f.failure:
             raise f.failure
-        payload = f.payload
-        if payload is None:
-            payload = {"content": [{"type": "text", "text": "OK"}], "stop_reason": "end_turn"} if request.url.path.endswith("/messages") else {
-                "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}]}
-        return httpx.Response(f.status, json=payload, headers={"Location": "https://unapproved.example/"})
+        if request.url.path.endswith("/models"):
+            payload = f.model_payload or {"object": "list", "data": [{"id": "operator-model"}]}
+            status = f.model_status
+        else:
+            payload = f.payload
+            if payload is None:
+                payload = {"content": [{"type": "text", "text": "OK"}], "stop_reason": "end_turn"} if request.url.path.endswith("/messages") else {
+                    "choices": [{"message": {"role": "assistant", "content": "OK"}, "finish_reason": "stop"}]}
+            status = f.status
+        return httpx.Response(status, json=payload, headers={"Location": "https://unapproved.example/"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as provider_client:
         application.state.ai_provider_registry = build_ai_provider_registry(provider_client)
         yield f
 
 
-async def configure(f, provider="openai_compatible", enabled=True, key=False):
-    body = {"provider": provider, "model": "operator-model", "enabled": False,
+async def configure(f, provider="openai_compatible", enabled=True, key=False, model="operator-model"):
+    body = {"provider": provider, "model": model, "enabled": False,
         "base_url": ENDPOINT if provider == "openai_compatible" else None, "tool_calling": True}
     assert (await f.client.put(f.path, json=body)).status_code == 200
     if key:
@@ -71,18 +77,50 @@ async def test_saved_keyless_success_is_bounded_and_does_not_mutate_customer_or_
     assert response.headers["cache-control"] == "no-store"
     assert (await f.client.get(f.path)).json() == before
     assert await f.db.scalar(select(func.count()).select_from(CustomerSession)) == 0
-    request, = f.requests
-    assert str(request.url) == ENDPOINT + "/chat/completions"
-    assert "authorization" not in request.headers
-    body = json.loads(request.content)
+    model_request, generation_request = f.requests
+    assert str(model_request.url) == ENDPOINT + "/models" and model_request.method == "GET"
+    assert str(generation_request.url) == ENDPOINT + "/chat/completions"
+    assert "authorization" not in model_request.headers
+    assert "authorization" not in generation_request.headers
+    body = json.loads(generation_request.content)
     assert body == {"model": "operator-model", "messages": [{"role": "user", "content": "Reply OK."}], "max_tokens": 16}
-    assert request.extensions["timeout"]["read"] <= 10 and request.extensions["timeout"]["connect"] <= 3
+    assert model_request.extensions["timeout"]["read"] <= 2 and model_request.extensions["timeout"]["connect"] <= 1
+    assert generation_request.extensions["timeout"]["read"] <= 10 and generation_request.extensions["timeout"]["connect"] <= 3
     event = await f.db.scalar(select(AuditEvent).where(AuditEvent.event_type == "admin.provider.connection_tested"))
     assert event.business_id == f.bid and event.actor_user_id is not None
     expected = {"provider_action": "connection_tested", "provider": "openai_compatible", "success": True, "diagnostic_code": "AI_CONNECTION_OK"}
     assert event.details == expected
     audit = (await f.client.get(f.path.replace("/provider", "/audit"))).json()
     assert next(row["details"] for row in audit["items"] if row["event_type"] == event.event_type) == expected
+
+
+async def test_advertised_model_must_match_exactly_before_generation(diagnostics):
+    f = diagnostics
+    await configure(f, model="tpai-ornith-1.5-9b-5")
+    f.model_payload = {"object": "list", "data": [{"id": "tpai-ornith-1.5-9b-56"}]}
+    result = await f.client.post(f.path + "/test", json={})
+    assert result.json()["code"] == "AI_MODEL_UNAVAILABLE"
+    assert len(f.requests) == 1 and f.requests[0].url.path == "/v1/models"
+
+
+async def test_malformed_model_list_is_sanitized_and_stops_generation(diagnostics, caplog):
+    f = diagnostics
+    await configure(f)
+    f.model_payload = {"object": "list", "data": [{"name": SECRET}], "private": SECRET}
+    result = await f.client.post(f.path + "/test", json={})
+    assert result.json()["code"] == "AI_PROVIDER_BAD_RESPONSE"
+    assert len(f.requests) == 1
+    assert SECRET not in result.text and SECRET not in caplog.text
+
+
+@pytest.mark.parametrize("status", [404, 405, 501])
+async def test_unsupported_model_discovery_falls_back_to_generation(diagnostics, status):
+    f = diagnostics
+    await configure(f)
+    f.model_status = status
+    result = await f.client.post(f.path + "/test", json={})
+    assert result.json()["code"] == "AI_CONNECTION_OK"
+    assert [request.url.path for request in f.requests] == ["/v1/models", "/v1/chat/completions"]
 
 
 @pytest.mark.parametrize("provider,url,header", [
@@ -99,9 +137,12 @@ async def test_each_provider_reuses_its_transport_harness_and_stored_key(diagnos
     result = await f.client.post(f.path + "/test")
     assert result.json()["code"] == "AI_CONNECTION_OK" and result.json()["provider"] == provider
     assert set(result.json()) == {"code", "provider", "model"}
-    request, = f.requests
+    request = f.requests[-1]
     assert str(request.url) == url
     assert request.headers[header] == (SECRET if provider == "anthropic" else "Bearer " + SECRET)
+    if provider == "openai_compatible":
+        assert f.requests[0].url.path == "/v1/models"
+        assert f.requests[0].headers["authorization"] == "Bearer " + SECRET
     body = json.loads(request.content)
     assert body["max_completion_tokens" if provider == "openai" else "max_tokens"] == 16
     assert "tools" not in body and "tool_choice" not in body
@@ -120,7 +161,7 @@ async def test_http_failures_are_fixed_codes_without_response_or_secret_material
     f.status, f.payload = status, {"error": {"message": SECRET, "authorization": SECRET, "path": "/private/path"}}
     result = await f.client.post(f.path + "/test", json={})
     assert result.status_code == 200 and result.json()["code"] == code
-    assert len(f.requests) == 1  # No redirects or retry storm.
+    assert len(f.requests) == 2  # One discovery request and one generation request; no retries.
     assert SECRET not in result.text and "/private/path" not in result.text
     event = await f.db.scalar(select(AuditEvent).where(AuditEvent.event_type == "admin.provider.connection_tested"))
     assert event.details["success"] is False and event.details["diagnostic_code"] == code
@@ -147,7 +188,7 @@ async def test_structured_model_rejection_is_recognized_without_parsing_error_te
     response = await f.client.post(f.path + "/test", json={})
     assert response.json()["code"] == "AI_MODEL_UNAVAILABLE"
     assert SECRET not in response.text and SECRET not in caplog.text
-    assert len(f.requests) == 1
+    assert len(f.requests) == 2
 
 
 @pytest.mark.parametrize("state,code", [("missing", "AI_CONFIGURATION_INVALID"), ("disabled", "AI_DISABLED"),

@@ -12,7 +12,7 @@ from budbot.providers.ai.base import (
     require_tool_capability,
 )
 from budbot.providers.ai.errors import AIError
-from budbot.providers.ai.http import post_json
+from budbot.providers.ai.http import get_json, post_json
 
 
 class OpenAICompatibleTransport:
@@ -28,6 +28,35 @@ class OpenAICompatibleTransport:
         self.client = client
         self.default_base_url = default_base_url
         self.require_api_key = require_api_key
+
+    async def available_models(self, config: AIProviderConfig) -> frozenset[str] | None:
+        """Return exact advertised model IDs, or None when listing is unsupported."""
+        if config.provider != "openai_compatible":
+            raise AIError("AI_PROVIDER_UNKNOWN")
+        base_url = config.base_url or self.default_base_url
+        if not base_url:
+            raise AIError("AI_CONFIGURATION_INVALID")
+        headers = {"accept": "application/json"}
+        if config.api_key:
+            headers["authorization"] = f"Bearer {config.api_key}"
+        payload = await get_json(
+            self.client,
+            f"{base_url.rstrip('/')}/models",
+            headers=headers,
+            config=config,
+            unsupported_statuses=frozenset({404, 405, 501}),
+        )
+        if payload is None:
+            return None
+        data = payload.get("data")
+        if payload.get("object") != "list" or not isinstance(data, list):
+            raise AIError("AI_PROVIDER_BAD_RESPONSE")
+        model_ids: set[str] = set()
+        for item in data:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+                raise AIError("AI_PROVIDER_BAD_RESPONSE")
+            model_ids.add(item["id"])
+        return frozenset(model_ids)
 
     async def generate(
         self,

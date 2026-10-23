@@ -500,6 +500,7 @@ test("provider test uses saved tenant settings once, disables controls in flight
   resolve({ code: "AI_CONNECTION_OK", message: "private marker", model: "private marker", provider: "private marker" }); await task;
   assert.deepEqual(writes, [{ path: "/api/v1/businesses/a/provider/test", method: "POST", payload: {} }]);
   assert.match(root.textContent, /Connected successfully/);
+  assert.match(root.textContent, /If the compatible endpoint supports model discovery, the configured model ID was also checked/);
   assert.match(root.textContent, /Provider: LM Studio \/ OpenAI-compatible/);
   assert.ok(root.textContent.includes(`Model: ${profile.model}`));
   assert.ok(!root.textContent.includes("private marker"));
