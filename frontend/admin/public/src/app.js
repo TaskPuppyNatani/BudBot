@@ -66,7 +66,7 @@ export class AdminApp {
     form.append(button);
   }
   path(suffix = "") { return `/api/v1/businesses/${encodeURIComponent(this.businessId)}${suffix}`; }
-  discard() { return !this.dirty || this.confirm("Discard unsaved changes?"); }
+  discard() { return !this.dirty || this.confirm.call(globalThis, "Discard unsaved changes?"); }
   notice() {
     if (this.status) {
       this.status.textContent = this.message;
@@ -368,7 +368,7 @@ export class AdminApp {
     credential.autocomplete = "new-password";
     this.saveButton(secretForm, permission, "Set or replace credential");
     secretForm.append(this.button("Remove credential and disable AI", () => {
-      if (!this.confirm("Remove this business's provider credential and disable AI?")) return;
+      if (!this.confirm.call(globalThis, "Remove this business's provider credential and disable AI?")) return;
       return this.run(async () => { await this.api.mutate(this.path("/provider/credential"), "DELETE"); await this.loadManagementPanel(); this.render(); }, "Credential removed; AI disabled.");
     }, permission));
     section.append(secretForm); return section;
@@ -420,7 +420,7 @@ export class AdminApp {
     });
     this.saveButton(form, permission, location ? "Save location and hours" : "Create location");
     if (location) form.append(this.button(location.active ? "Deactivate location" : "Reactivate location", async () => {
-      if (!this.confirm(`${location.active ? "Deactivate" : "Reactivate"} ${location.display_name}?${location.active ? " It will no longer be selectable by customers." : ""}`)) return;
+      if (!this.confirm.call(globalThis, `${location.active ? "Deactivate" : "Reactivate"} ${location.display_name}?${location.active ? " It will no longer be selectable by customers." : ""}`)) return;
       await this.run(async () => {
         await this.api.mutate(location.active ? this.path(`/locations/${location.id}/deactivate`) : this.path(`/locations/${location.id}`), location.active ? "POST" : "PATCH", location.active ? undefined : { active: true });
         await this.loadBusiness(); this.render();
@@ -431,7 +431,7 @@ export class AdminApp {
   assistantForms() {
     const section = this.node("section"); const permission = "assistant.write"; let fields;
     const form = this.form("Business assistant defaults", permission, async () => {
-      if (this.assistant.enabled && !fields.enabled.checked && !this.confirm("Disable the business assistant? This affects customer chat across locations using this default.")) return false;
+      if (this.assistant.enabled && !fields.enabled.checked && !this.confirm.call(globalThis, "Disable the business assistant? This affects customer chat across locations using this default.")) return false;
       const payload = Object.fromEntries(Object.entries(fields).map(([key, input]) => [key, key === "enabled" ? input.checked : input.value.trim() || null]));
       await this.api.mutate(this.path("/assistant"), "PATCH", payload); await this.loadBusiness(); this.render();
     });

@@ -380,3 +380,28 @@ test("provider configuration keeps credentials write-only and preserves them on 
   assert.equal(writes.at(-1).method, "DELETE");
   assert.match(root.textContent, /Credential configured: No/);
 });
+
+test("browser confirmation receiver is preserved and credential removal honors cancellation", async () => {
+  const { root, api, writes } = setup(["business.read", "provider.read", "provider.write"]);
+  const profile = { configured: true, provider: "openrouter", model: "test/model", enabled: true, credential_configured: true };
+  const request = api.request; const prompts = []; let confirmed = false;
+  api.request = async path => path.endsWith("/provider") ? structuredClone(profile) : request(path);
+  api.mutate = async (path, method) => { writes.push({ path, method }); profile.enabled = false; profile.credential_configured = false; };
+  const app = new AdminApp(root, api, { confirm: function (message) {
+    assert.equal(this, globalThis, "Native Window.confirm requires the browser-global receiver");
+    prompts.push(message); return confirmed;
+  } });
+  await app.start();
+  app.dirty = true;
+  assert.equal(app.discard(), false);
+  app.dirty = false;
+  button(root, "AI Provider").dispatch("click"); await app.task;
+  button(root, "Remove credential and disable AI").dispatch("click"); await app.task;
+  assert.equal(writes.length, 0, "Cancellation must not send DELETE");
+  assert.equal(profile.credential_configured, true);
+  confirmed = true;
+  button(root, "Remove credential and disable AI").dispatch("click"); await app.task;
+  assert.deepEqual(writes, [{ path: "/api/v1/businesses/a/provider/credential", method: "DELETE" }]);
+  assert.equal(prompts.filter(message => message.includes("provider credential")).length, 2);
+  assert.match(root.textContent, /Credential configured: No/);
+});
