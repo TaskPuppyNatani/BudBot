@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "BudBot backend API"
 requires-python = ">=3.12"
 dependencies = [
+  "cryptography>=46,<48",
   "alembic>=1.14,<2",
   "argon2-cffi>=23.1,<26",
   "asyncpg>=0.30,<1",

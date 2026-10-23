@@ -379,3 +379,67 @@ Audit logs must not record plaintext credentials.
 - general FAQs and location-specific FAQs resolve correctly;
 - feature flags affect `/help` and command availability;
 - secrets are not returned through ordinary configuration APIs.
+
+## M9B Pass 3: business AI providers
+
+Owners configure AI in `/admin/` → **AI Provider**. Existing owner-only provider
+permissions apply. Save disabled configuration, explicitly set a new key, then
+enable AI. Normal saves preserve credentials; removing a credential disables AI.
+Remove credentials before changing provider identity or endpoint.
+
+OpenRouter uses the existing compatible transport at `https://openrouter.ai/api/v1`
+with generic_openai harness. OpenAI uses openai_chat; Anthropic uses
+anthropic_native. Those providers require keys. LM Studio uses generic_openai,
+requires a base URL and permits keyless operation. Tool calling is explicitly
+operator-declared, not assumed or probed. Other unsupported capabilities remain off.
+
+Compatible endpoints must match the trusted deployment's exact JSON allowlist,
+`BUDBOT_AI_COMPATIBLE_ENDPOINTS`, e.g. `["http://host.docker.internal:1234/v1"]`.
+It defaults to empty; tenants cannot authorize new network destinations themselves.
+Restrict the list to services/DNS names controlled by the deployment operator and
+use network egress rules against DNS rebinding/untrusted DNS. Never allow a
+customer-controlled hostname. URLs reject userinfo, query, fragment and control
+characters. This is configuration for normal runtime requests, not a probe API.
+The URL must be reachable FROM the backend container: localhost points to BudBot,
+not LM Studio. Docker Desktop commonly provides host.docker.internal; Linux may
+need an explicit host-gateway mapping, server bind address and firewall rules.
+No networking automation is supplied.
+
+### Encryption deployment and recovery
+
+Set `BUDBOT_PROVIDER_ROOT_KEY` to URL-safe base64 of 32 cryptographically random
+bytes in trusted process/deployment configuration. It is never in the database.
+For a fresh installation only, append directly to the existing private Compose
+`.env` without printing the value:
+
+```sh
+umask 077
+python3 - <<'PY'
+import base64, os
+with open('.env', 'a') as configuration:
+    configuration.write('\nBUDBOT_PROVIDER_ROOT_KEY=' + base64.urlsafe_b64encode(os.urandom(32)).decode() + '\n')
+PY
+```
+
+Protect existing `.env` permissions too; umask affects newly created files.
+Restart/recreate the backend. Do not regenerate this key for an existing install.
+Never commit/log the key; production may inject it via a deployment secret facility.
+Back it up separately from database backups. Losing/replacing it requires
+re-entering provider credentials. There is no plaintext or ephemeral-key fallback.
+
+cryptography AES-256-GCM uses fresh random 96-bit nonces and tenant/provider/endpoint
+associated data. Version plus ciphertext live in a separate credential table.
+SecretStore allows a future versioned KMS adapter without requiring cloud services
+now. Online rotation is deferred. Only runtime configuration resolution decrypts;
+admin GET returns safe metadata and credential_configured only. Missing/malformed
+root keys, wrong-key/corrupt ciphertext and unknown versions fail closed with safe
+errors. Plaintext exists transiently in requests/runtime, not persistent ORM state;
+Python cannot promise memory zeroization. SQL parameter logging is suppressed.
+
+Persisted profiles are authoritative, including disabled profiles. Unconfigured
+tenants never inherit global credentials. Explicit `BUDBOT_AI_LEGACY_BUSINESS_ID`
+may bind process AI settings to exactly one trusted business. The test environment
+retains synthetic process fixtures; never deploy with environment=test.
+`BUDBOT_AI_ENABLED` now controls legacy process fallback only;
+`BUDBOT_AI_TENANT_ENABLED=false` disables tenant AI globally. Timeouts/output limits
+remain deployment controls. No Test Connection, diagnostics or model discovery.

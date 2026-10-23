@@ -29,7 +29,7 @@ def test_m9a_is_the_single_head_after_m6() -> None:
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0007_m9a_auth_admin"]
+    assert scripts.get_heads() == ["0008_m9b_tenant_ai"]
     revision = scripts.get_revision("0007_m9a_auth_admin")
     assert revision is not None
     assert revision.down_revision == "0006_m6_provider_neutral_catalog"

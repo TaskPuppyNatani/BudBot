@@ -83,5 +83,5 @@ def test_alembic_has_exactly_one_head_after_m9a() -> None:
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     assert ScriptDirectory.from_config(config).get_heads() == [
-        "0007_m9a_auth_admin"
+        "0008_m9b_tenant_ai"
     ]

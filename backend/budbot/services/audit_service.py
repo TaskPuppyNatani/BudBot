@@ -56,6 +56,8 @@ def audit_details_for_read(details: Mapping[str, Any] | None) -> dict[str, objec
     changed = safe.get("changed_fields")
     if isinstance(changed, str):
         result["changed_fields"] = ",".join(sorted(set(changed.split(",")) & _AUDIT_CHANGE_FIELDS))
+    if safe.get("provider_action") in {"configuration_updated", "credential_set", "credential_replaced", "credential_removed"}:
+        result["provider_action"] = safe["provider_action"]
     if safe.get("method") == "local_cli":
         result["method"] = "local_cli"
     return result

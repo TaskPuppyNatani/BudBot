@@ -151,3 +151,12 @@ and session expiry clear prior FAQ/audit state; neither panel is polled.
 Provider settings/credentials/tests, administrative slash commands and
 account/membership management remain reserved for later passes. Control Center
 is unchanged: open the admin URL manually. No Pass 3 provider work is included.
+
+## Pass 3: AI Provider
+
+Owners can save per-business configuration, explicitly set/replace a write-only
+key and remove it (disabling AI). Ordinary saves never send a credential. Key
+inputs clear on submission, including failures. Configure the deployment root key
+and exact compatible-endpoint allowlist as documented in docs/configuration.md.
+The model/tool-calling declaration must match the chosen provider. No Test
+Connection, diagnostics, discovery or credential rehydration is implemented.

@@ -29,7 +29,7 @@ from budbot.providers.ai.base import (
     ProviderTransport,
     require_tool_capability,
 )
-from budbot.providers.ai.config import provider_config_from_settings
+from budbot.services.provider_service import ProviderService
 from budbot.providers.ai.errors import AIError
 from budbot.providers.ai.harness_registry import AIHarnessRegistry
 from budbot.providers.ai.registry import AIProviderRegistry
@@ -152,7 +152,7 @@ class AIService:
                     raise
             return self._fixed_response(MEDICAL_REFUSAL, "medical_policy")
 
-        config = provider_config_from_settings(self.settings)
+        config = await ProviderService(self.session, self.tenant, self.settings).runtime()
         provider = self.providers.resolve(config.provider)
         self.harnesses.validate_pair(config.provider, config.harness)
         harness = self.harnesses.resolve(config.harness)
@@ -266,7 +266,7 @@ class AIService:
     async def generate_text(self, messages: Sequence[AIMessage]) -> AIResponse:
         """Allow trusted internal callers to generate non-tool text when configured."""
 
-        config = provider_config_from_settings(self.settings)
+        config = await ProviderService(self.session, self.tenant, self.settings).runtime()
         if not config.capabilities.text_generation:
             raise AIError("AI_CAPABILITY_UNSUPPORTED")
         self.harnesses.validate_pair(config.provider, config.harness)

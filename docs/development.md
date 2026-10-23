@@ -717,3 +717,23 @@ These details describe the bounded M3 implementation without starting M4:
 - Future custom commands are represented only by a safe declarative definition and
   protected-name validation. M4 does not execute arbitrary custom actions, Python,
   shell commands, SQL, providers, or client-selected handlers.
+
+### M9B Pass 3 — tenant providers and encrypted credentials
+
+Revision `0008_m9b_tenant_ai` follows `0007_m9a_auth_admin`, adding one profile and
+one optional separate encrypted credential per business, with cascading foreign
+keys. AIService resolves the current tenant via ProviderService and retains its
+existing transport, harness, tool and compliance boundaries. No old migrations change.
+Owner-only `GET/PUT /api/v1/businesses/{business_id}/provider` and
+`PUT/DELETE .../provider/credential` reuse CSRF/membership checks. Writes and audit
+events commit together before publishing success. Provider audit details allow
+only configuration_updated / credential_set / credential_replaced /
+credential_removed actions; no key, ciphertext, model, URL or request body values.
+See configuration.md for master-key protection, endpoint allowlists and transition.
+
+Manual acceptance: save each provider disabled with a matching model; set a key,
+enable it, edit the model and verify configured state survives; replace and remove
+keys explicitly. Confirm removal disables AI, local keyless configuration works,
+no saved key appears in the browser, audit actions are safe, reload/login persist
+state, and authorized business switching keeps profiles separate. Real provider
+chat acceptance is a human step; automated tests use synthetic credentials only.

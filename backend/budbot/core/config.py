@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 import re
 from typing import Literal
+from uuid import UUID
 from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -41,6 +42,10 @@ class Settings(BaseSettings):
     admin_login_window_seconds: int = Field(default=900, ge=60, le=86_400)
     admin_login_lockout_seconds: int = Field(default=900, ge=60, le=86_400)
     admin_login_rate_limit_key: SecretStr | None = None
+    ai_tenant_enabled: bool = True
+    ai_compatible_endpoints: tuple[str, ...] = ()
+    provider_root_key: SecretStr | None = None
+    ai_legacy_business_id: UUID | None = None
     ai_enabled: bool = False
     ai_provider: str = "openai_compatible"
     ai_base_url: str | None = None

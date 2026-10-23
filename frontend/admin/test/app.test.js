@@ -346,3 +346,37 @@ test("audit load authorization errors are actionable and expired sessions clear 
   assert.ok(button(root, "Sign in"));
   assert.deepEqual(app.faqs, []); assert.equal(app.auditPage, null);
 });
+
+test("provider configuration keeps credentials write-only and preserves them on ordinary saves", async () => {
+  const { root, app, api, writes } = setup(["business.read", "provider.read", "provider.write"]);
+  const profile = { configured: true, provider: "openrouter", model: "sample/model", enabled: false, tool_calling: false, base_url: null, credential_configured: true };
+  const request = api.request;
+  api.request = async path => path.endsWith("/provider") ? structuredClone(profile) : request(path);
+  api.mutate = async (path, method, payload) => {
+    writes.push({ path, method, payload });
+    if (path.endsWith("/credential")) profile.credential_configured = method !== "DELETE";
+    else Object.assign(profile, payload);
+    return structuredClone(profile);
+  };
+  await app.start(); button(root, "AI Provider").dispatch("click"); await app.task;
+  assert.match(root.textContent, /Credential configured: Yes/);
+  assert.equal(field(root, "New API key").value, "");
+  field(root, "Model identifier").value = "another/model";
+  form(root, "Provider configuration").dispatch("submit"); await app.task;
+  assert.ok(!("credential" in writes[0].payload));
+  assert.equal(profile.credential_configured, true);
+  field(root, "Provider").value = "openai_compatible"; field(root, "Provider").dispatch("change");
+  assert.equal(field(root, "Backend-reachable base URL").disabled, false);
+  assert.equal(field(root, "Backend-reachable base URL").required, true);
+  assert.match(root.textContent, /backend container/);
+  field(root, "Provider").value = "anthropic"; field(root, "Provider").dispatch("change");
+  assert.equal(field(root, "Backend-reachable base URL").disabled, true);
+  const input = field(root, "New API key"); input.value = "synthetic-provider-test";
+  form(root, "Replace provider credential").dispatch("submit"); await app.task;
+  assert.equal(input.value, ""); assert.equal(field(root, "New API key").value, "");
+  assert.ok(!root.textContent.includes("synthetic-provider-test"));
+  assert.ok(!root.textContent.includes("Test Connection"));
+  button(root, "Remove credential and disable AI").dispatch("click"); await app.task;
+  assert.equal(writes.at(-1).method, "DELETE");
+  assert.match(root.textContent, /Credential configured: No/);
+});

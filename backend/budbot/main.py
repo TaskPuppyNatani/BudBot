@@ -9,6 +9,7 @@ import httpx
 from fastapi.staticfiles import StaticFiles
 
 from budbot.api.errors import install_exception_handlers
+from budbot.api.routes.provider import router as provider_router
 from budbot.api.routes.auth import router as auth_router
 from budbot.api.routes.audit import router as audit_router
 from budbot.api.routes.branding import router as branding_router, published_branding_image
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_exception_handlers(application)
     application.include_router(health_router)
     application.include_router(auth_router)
+    application.include_router(provider_router)
     application.include_router(audit_router)
     application.include_router(knowledge_router)
     application.include_router(branding_router)

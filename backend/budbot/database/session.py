@@ -21,6 +21,7 @@ class Database:
         self.engine: AsyncEngine = create_async_engine(
             settings.database_url,
             pool_pre_ping=True,
+            hide_parameters=True,
             pool_size=settings.database_pool_size,
             max_overflow=settings.database_max_overflow,
             connect_args={

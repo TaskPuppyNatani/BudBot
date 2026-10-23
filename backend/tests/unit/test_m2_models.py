@@ -19,6 +19,8 @@ def test_metadata_contains_existing_and_m9a_tables() -> None:
         "auth_setup_state",
         "business_memberships",
         "businesses",
+        "business_ai_profiles",
+        "provider_credentials",
         "catalog_categories",
         "catalog_deals",
         "catalog_products",

@@ -131,18 +131,20 @@ export class AdminApp {
     await this.loadManagementPanel();
   }
   resetManagementData() {
+    this.providerProfile = null;
     this.faqs = []; this.editFaqId = null; this.auditPage = null;
     this.auditOffset = 0; this.panelError = ""; this.panelLoaded = false;
   }
   async loadManagementPanel(offset = 0) {
     const id = this.businessId;
-    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : null;
+    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : this.tab === "AI Provider" ? "provider.read" : null;
     this.panelError = ""; this.panelLoaded = false;
     if (!permission || !this.api.can(id, permission)) return;
     try {
-      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : `/audit?limit=25&offset=${offset}`));
+      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : `/audit?limit=25&offset=${offset}`));
       if (id !== this.businessId) return;
       if (this.tab === "FAQs") this.faqs = result;
+      else if (this.tab === "AI Provider") this.providerProfile = result;
       else { this.auditPage = result; this.auditOffset = offset; }
       this.panelLoaded = true;
     } catch (error) {
@@ -211,11 +213,11 @@ export class AdminApp {
       this.root.replaceChildren(fragment); this.updateControls(); return;
     }
     const nav = this.node("nav", "", { "aria-label": "Management sections" });
-    for (const title of ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History"]) {
+    for (const title of ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History", "AI Provider"]) {
       const button = this.button(title, () => {
         if (!this.discard()) return;
         this.dirty = false; this.tab = title;
-        if (["FAQs", "Audit History"].includes(title)) return this.run(async () => {
+        if (["FAQs", "Audit History", "AI Provider"].includes(title)) return this.run(async () => {
           this.resetManagementData(); this.render();
           await this.loadManagementPanel(); this.render();
         });
@@ -239,9 +241,9 @@ export class AdminApp {
       });
       fragment.append(selection);
     }
-    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView" };
+    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView" };
     const panel = this[builders[this.tab]]();
-    this.managementPanel = ["FAQs", "Audit History"].includes(this.tab) ? panel : null;
+    this.managementPanel = ["FAQs", "Audit History", "AI Provider"].includes(this.tab) ? panel : null;
     fragment.append(panel);
     this.root.replaceChildren(fragment); this.updateControls(); this.notice();
   }
@@ -329,6 +331,47 @@ export class AdminApp {
     if (this.auditOffset > 0) section.append(this.button("Newest events", () => page(0), "audit.read"));
     if (this.auditPage.next_offset !== null) section.append(this.button("Older events", () => page(this.auditPage.next_offset), "audit.read"));
     return section;
+  }
+  providerView() {
+    const section = this.managementSection("AI Provider", "provider.read");
+    if (!this.api.can(this.businessId, "provider.read") || !this.panelLoaded) return section;
+    const profile = this.providerProfile; const permission = "provider.write";
+    section.append(this.node("p", `Credential configured: ${profile.credential_configured ? "Yes" : "No"}. Existing credentials are never returned to this browser.`));
+    section.append(this.node("p", "Save configuration disabled first, set the credential, then enable AI. Removing a credential disables AI. Remove the credential before changing provider identity."));
+    let provider, model, endpoint, enabled, tools;
+    const form = this.form("Provider configuration", permission, async () => {
+      await this.api.mutate(this.path("/provider"), "PUT", { provider: provider.value, model: model.value.trim(), enabled: enabled.checked,
+        base_url: provider.value === "openai_compatible" ? endpoint.value.trim() : null, tool_calling: tools.checked });
+      await this.loadManagementPanel(); this.render();
+    });
+    provider = this.field(form, "Provider", profile.provider || "openrouter", { permission, options: [["openrouter", "OpenRouter"], ["openai_compatible", "LM Studio / OpenAI-compatible"], ["openai", "OpenAI"], ["anthropic", "Anthropic"]] });
+    model = this.field(form, "Model identifier", profile.model, { permission, required: true, maxLength: 200 });
+    endpoint = this.field(form, "Backend-reachable base URL", profile.base_url, { permission, maxLength: 2048, condition: () => provider.value === "openai_compatible" });
+    const guide = this.node("p"); form.append(guide);
+    const refresh = () => {
+      endpoint.required = provider.value === "openai_compatible";
+      guide.textContent = provider.value === "openai_compatible" ? "Use an endpoint reachable FROM the BudBot backend container. Container localhost points to BudBot itself. Local servers may not need a key." : "This provider uses its standard cloud endpoint and requires an API key.";
+      this.updateControls();
+    };
+    provider.addEventListener("change", refresh); refresh();
+    enabled = this.field(form, "AI enabled", profile.enabled, { permission, type: "checkbox" });
+    tools = this.field(form, "Model supports tool calling", profile.tool_calling, { permission, type: "checkbox" });
+    form.append(this.node("p", "Declare tool calling only when your selected model supports it. Customer chat requires verified tools; capabilities are not probed."));
+    this.saveButton(form, permission, "Save provider configuration"); section.append(form);
+    let credential;
+    const secretForm = this.form("Replace provider credential", permission, async () => {
+      try { await this.api.mutate(this.path("/provider/credential"), "PUT", { credential: credential.value }); }
+      finally { credential.value = ""; }
+      await this.loadManagementPanel(); this.render();
+    });
+    credential = this.field(secretForm, "New API key", "", { permission, type: "password", required: true, maxLength: 10000 });
+    credential.autocomplete = "new-password";
+    this.saveButton(secretForm, permission, "Set or replace credential");
+    secretForm.append(this.button("Remove credential and disable AI", () => {
+      if (!this.confirm("Remove this business's provider credential and disable AI?")) return;
+      return this.run(async () => { await this.api.mutate(this.path("/provider/credential"), "DELETE"); await this.loadManagementPanel(); this.render(); }, "Credential removed; AI disabled.");
+    }, permission));
+    section.append(secretForm); return section;
   }
   businessForm() {
     const permission = "business.write"; let fields, flags, payments, policies;

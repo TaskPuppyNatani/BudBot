@@ -388,3 +388,10 @@ The architecture is considered V1-ready when:
 - at least one local/OpenAI-compatible AI path and one cloud AI path are supported;
 - every V1 slash command in `docs/commands.md` is implemented, documented, permission/compliance checked, and tested;
 - tests demonstrate tenant isolation.
+
+M9B Pass 3 adds tenant provider resolution inside AIService, reusing existing
+transports/harnesses. Metadata and AES-GCM credentials live in separate per-business
+tables. Trusted process configuration supplies the master key and compatible URL
+allowlist. Credentials bind to tenant/provider/endpoint; only runtime resolution
+decrypts. Persisted profiles supersede process AI settings. Unconfigured production
+tenants fail closed except an explicitly bound single-tenant legacy mode.

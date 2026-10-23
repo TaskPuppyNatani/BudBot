@@ -1,3 +1,4 @@
+from budbot.models.provider import BusinessAIProfile, ProviderCredential
 """Import domain models so SQLAlchemy and Alembic receive complete metadata."""
 from budbot.models.knowledge import FAQEntry
 from budbot.models.catalog import (
