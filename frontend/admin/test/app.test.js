@@ -405,3 +405,68 @@ test("browser confirmation receiver is preserved and credential removal honors c
   assert.equal(prompts.filter(message => message.includes("provider credential")).length, 2);
   assert.match(root.textContent, /Credential configured: No/);
 });
+
+function localRuntime(available = true, permissions = ["business.read", "runtime.shutdown"]) {
+  const result = setup(permissions); const request = result.api.request;
+  result.api.request = async path => path.endsWith("/local-runtime")
+    ? { available, state: available ? "running" : "unavailable" } : request(path);
+  return result;
+}
+
+test("local System controls require both owner permission and a live local capability", async () => {
+  for (const [available, permissions] of [[false, ["business.read", "runtime.shutdown"]], [true, ["business.read"]]]) {
+    const { root, app } = localRuntime(available, permissions); await app.start();
+    assert.equal(button(root, "System"), undefined);
+    assert.equal(button(root, "Shut down BudBot"), undefined);
+  }
+  const { root, app, api } = localRuntime(); const request = api.request;
+  api.request = async path => {
+    if (path.endsWith("/local-runtime")) throw new ApiError(404, "Not found.");
+    return request(path);
+  };
+  await app.start();
+  assert.equal(button(root, "System"), undefined);
+  assert.ok(form(root, "Business settings")); assert.equal(app.busy, false);
+});
+
+test("local shutdown uses the Window confirmation receiver and cancellation never sends a request", async () => {
+  const { root, app, writes } = localRuntime(); let confirmed = false;
+  app.confirm = function (message) { assert.equal(this, globalThis); assert.match(message, /all businesses/); return confirmed; };
+  await app.start(); button(root, "System").dispatch("click");
+  assert.match(root.textContent, /BudBot status: Running/);
+  button(root, "Shut down BudBot").dispatch("click"); await app.task;
+  assert.deepEqual(writes, []);
+  confirmed = true;
+  button(root, "Shut down BudBot").dispatch("click"); await app.task;
+  assert.deepEqual(writes, [{ path: "/api/v1/businesses/a/local-runtime/shutdown", method: "POST", payload: {} }]);
+  assert.match(root.textContent, /BudBot is shutting down\. You can close this tab\./);
+  assert.equal(button(root, "Shut down BudBot"), undefined);
+  assert.equal(app.busy, false);
+});
+
+test("shutdown connection loss leaves a clear terminal state without retrying or polling", async () => {
+  for (const status of [0, 502]) {
+  const { root, app, api } = localRuntime(); let reject; let calls = 0;
+  api.mutate = () => { calls++; return new Promise((resolve, fail) => { reject = fail; }); };
+  await app.start(); button(root, "System").dispatch("click");
+  button(root, "Shut down BudBot").dispatch("click");
+  assert.match(root.textContent, /Requesting local shutdown/);
+  assert.equal(button(root, "Reload settings"), undefined);
+  reject(new ApiError(status, "private transport details")); await app.task;
+  assert.match(root.textContent, /connection closed before shutdown could be confirmed/);
+  assert.match(root.textContent, /You can close this tab/);
+  assert.ok(!root.textContent.includes("private transport details"));
+  assert.equal(calls, 1); assert.equal(app.busy, false);
+  }
+});
+
+test("rejected local shutdown releases controls and does not claim success", async () => {
+  const { root, app, api } = localRuntime();
+  api.mutate = async () => { throw new ApiError(403, "Shutdown was not authorized."); };
+  await app.start(); button(root, "System").dispatch("click");
+  button(root, "Shut down BudBot").dispatch("click"); await app.task;
+  assert.match(root.textContent, /Shutdown was not authorized/);
+  assert.ok(!root.textContent.includes("BudBot is shutting down"));
+  assert.equal(button(root, "Shut down BudBot").disabled, false);
+  assert.equal(app.busy, false);
+});

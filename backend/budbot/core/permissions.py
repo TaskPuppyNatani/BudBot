@@ -24,6 +24,7 @@ class AdminPermission(StrEnum):
     AUDIT_READ = "audit.read"
     PROVIDER_READ = "provider.read"
     PROVIDER_WRITE = "provider.write"
+    RUNTIME_SHUTDOWN = "runtime.shutdown"
 
 
 _READ_PERMISSIONS = frozenset(

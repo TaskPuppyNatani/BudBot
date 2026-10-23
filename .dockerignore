@@ -6,6 +6,7 @@
 **/.venv
 **/__pycache__
 **/*.py[cod]
+backend/.budbot-runtime
 frontend/admin/*
 !frontend/admin/public
 frontend/admin/**/node_modules

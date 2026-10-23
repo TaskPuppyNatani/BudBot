@@ -22,6 +22,7 @@ from budbot.api.routes.health import router as health_router
 from budbot.api.routes.locations import router as locations_router
 from budbot.api.routes.knowledge import router as knowledge_router
 from budbot.api.routes.local_branding import router as local_branding_router
+from budbot.api.routes.local_runtime import router as local_runtime_router
 from budbot.api.routes.sessions import router as sessions_router
 from budbot.core.config import Settings, get_settings
 from budbot.database.session import Database
@@ -78,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(commands_router)
     application.include_router(chat_router)
     if active_settings.environment == "development":
+        application.include_router(local_runtime_router)
         application.include_router(local_branding_router)
         application.add_api_route(
             "/local-assets/{business_id}/{filename}", published_branding_image,

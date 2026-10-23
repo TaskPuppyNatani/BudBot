@@ -60,6 +60,33 @@ after moving the checkout. It shows terminal progress and keeps warnings/errors
 visible until Enter is pressed. A successful launch opens the Admin page and exits
 the launcher without stopping services. Browser sessions still require owner sign-in.
 
+### Local web shutdown (Linux development only)
+
+Launching with `./scripts/start_budbot.sh` also detaches a small host controller.
+The terminal launcher still exits normally. An authenticated **owner** can open
+**System** in Admin and choose **Shut down BudBot**. Confirmation explicitly covers
+all businesses in this local stack. The page reports shutdown, or an uncertain
+connection result if the backend disappears before acknowledging; it does not
+poll a backend that is shutting down. Rejected requests leave recovery controls.
+
+The host runs exactly `docker compose --project-name budbot -f docker-compose.dev.yml down`
+(using this checkout's absolute Compose path). No volume/image deletion flags are
+used, so database data and uploaded assets survive. The controller ignores repeated
+shutdown requests while stopping and exits after successful shutdown. Relaunch
+with the same start command, then verify your saved data in Admin. A failed Docker
+shutdown leaves the controller available for a retry after checking Docker.
+
+IPC uses a private `backend/.budbot-runtime/control.sock`, visible through the
+existing development source bind mount. The directory is mode 0700 and socket
+0600; this relies on the launching OS user's existing Docker authority. Runtime
+files are excluded from Git and Docker builds. No TCP management listener, Docker
+socket mount, shared browser token, or arbitrary command API is added. Only fixed
+status/shutdown messages are accepted. Backend requests require an active owner
+membership, CSRF for mutation, and a loopback Host with same Origin when supplied.
+The gateway routes are omitted in production. Without the local controller, the
+System control is hidden. Other platforms retain the existing Stop command and
+Control Center. Private `.env` and provider credentials are not changed.
+
 For initial configuration and the original foreground development command:
 
 ```bash

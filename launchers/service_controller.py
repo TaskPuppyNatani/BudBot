@@ -278,6 +278,20 @@ class BudBotServiceController:
         self.progress("BudBot is ready.")
         return LOCAL_ADMIN_URL
 
+    def enable_local_runtime(self) -> str | None:
+        if not sys.platform.startswith("linux"):
+            return "Local web shutdown supports Linux development launches; use the existing Stop command or Control Center."
+        from local_runtime_controller import ensure_running
+        return ensure_running(self.root)
+
+    def shutdown(self) -> None:
+        """Host-only predefined shutdown; named volumes and images are retained."""
+        self._run(
+            self._compose("down"),
+            "BudBot could not shut down. Check Docker and retry the local shutdown control.",
+            timeout=120, record_output=False,
+        )
+
     def local_ai_warning(self) -> str | None:
         """Read-only, credential-free network diagnostic from the backend container."""
         self.progress("Checking optional compatible AI connectivity from the backend…")
@@ -454,6 +468,10 @@ def main(argv: list[str] | None = None) -> int:
         controller.progress = lambda message: print(f"# {message}", flush=True)
         if action in {"launch", "launch-desktop"}:
             url = controller.launch()
+            runtime_warning = controller.enable_local_runtime()
+            if runtime_warning:
+                print(f"WARNING: {runtime_warning}", flush=True)
+                needs_attention = True
             print(f"Admin: {url}", flush=True)
             try:
                 opened = webbrowser.open(url, new=2)

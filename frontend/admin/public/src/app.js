@@ -8,6 +8,7 @@ export class AdminApp {
     this.busy = false; this.dirty = false; this.tab = "Business";
     this.businessId = null; this.locationId = null; this.newLocation = false;
     this.message = ""; this.failed = false;
+    this.runtime = null; this.shutdownState = null;
     this.resetManagementData();
   }
   node(tag, text = "", attributes = {}) {
@@ -117,6 +118,7 @@ export class AdminApp {
     });
   }
   async loadBusiness(id = this.businessId, selectedLocation = this.locationId) {
+    this.runtime = null;
     this.resetManagementData();
     if (this.managementPanel) this.managementPanel.replaceChildren(this.node("p", "Loading selected business…"));
     const base = `/api/v1/businesses/${encodeURIComponent(id)}`;
@@ -128,6 +130,11 @@ export class AdminApp {
     const detail = location ? await this.locationData(base, location.id) : {};
     Object.assign(this, { businessId: id, business, assistant, locations, compliance, locationId: location?.id || null, ...detail });
     this.newLocation = false; this.dirty = false;
+    if (this.api.can(id, "runtime.shutdown")) {
+      try { this.runtime = await this.api.request(`${base}/local-runtime`); }
+      catch (error) { if (error.status === 401) throw error; }
+    }
+    if (this.tab === "System" && !this.runtime?.available) this.tab = "Business";
     await this.loadManagementPanel();
   }
   resetManagementData() {
@@ -161,6 +168,7 @@ export class AdminApp {
     return { override, effectiveAssistant, effectiveCompliance };
   }
   renderLogin() {
+    this.runtime = null;
     this.resetManagementData(); this.managementPanel = null;
     this.controls = []; this.businessSelect = null; this.locationSelect = null;
     const form = this.node("form", "", { className: "card login" });
@@ -184,6 +192,16 @@ export class AdminApp {
     this.root.replaceChildren(form); this.updateControls(); this.notice();
   }
   render() {
+    if (this.shutdownState) {
+      this.controls = []; this.businessSelect = null; this.locationSelect = null; this.status = null;
+      const panel = this.node("section", "", { className: "card", role: "status", "aria-live": "polite" });
+      panel.append(this.node("h1", "Local BudBot runtime"));
+      panel.append(this.node("p", this.shutdownState === "requesting" ? "Requesting local shutdown…"
+        : this.shutdownState === "accepted" ? "BudBot is shutting down. You can close this tab."
+        : "The connection closed before shutdown could be confirmed. BudBot may be shutting down. You can close this tab; relaunch BudBot to check."));
+      panel.append(this.node("p", "To launch again, run scripts/start_budbot.sh. Saved data is preserved."));
+      this.root.replaceChildren(panel); return;
+    }
     if (!this.api.session) { this.renderLogin(); return; }
     this.controls = []; this.locationSelect = null;
     const fragment = this.node("div");
@@ -213,7 +231,9 @@ export class AdminApp {
       this.root.replaceChildren(fragment); this.updateControls(); return;
     }
     const nav = this.node("nav", "", { "aria-label": "Management sections" });
-    for (const title of ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History", "AI Provider"]) {
+    const sections = ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History", "AI Provider"];
+    if (this.runtime?.available && this.api.can(this.businessId, "runtime.shutdown")) sections.push("System");
+    for (const title of sections) {
       const button = this.button(title, () => {
         if (!this.discard()) return;
         this.dirty = false; this.tab = title;
@@ -241,11 +261,39 @@ export class AdminApp {
       });
       fragment.append(selection);
     }
-    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView" };
+    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView", System: "runtimeView" };
     const panel = this[builders[this.tab]]();
     this.managementPanel = ["FAQs", "Audit History", "AI Provider"].includes(this.tab) ? panel : null;
     fragment.append(panel);
     this.root.replaceChildren(fragment); this.updateControls(); this.notice();
+  }
+  runtimeView() {
+    const section = this.node("section", "", { className: "card" });
+    section.append(this.node("h2", "Local System / Runtime"));
+    const state = this.runtime?.state;
+    section.append(this.node("p", state === "stopping" ? "BudBot is shutting down. You can close this tab."
+      : state === "error" ? "The last shutdown attempt failed. Check Docker and retry." : "BudBot status: Running"));
+    section.append(this.node("p", "Shutdown stops this entire local development stack, including all businesses. Saved data is kept."));
+    if (this.runtime?.available && state !== "stopping")
+      section.append(this.button("Shut down BudBot", () => this.shutdownBudBot(), "runtime.shutdown"));
+    return section;
+  }
+  async shutdownBudBot() {
+    if (this.busy || !this.runtime?.available || !this.api.can(this.businessId, "runtime.shutdown")) return;
+    if (!this.confirm.call(globalThis, "Shut down the local BudBot stack for all businesses? Saved data will be kept.")) return;
+    this.busy = true; this.shutdownState = "requesting"; this.render();
+    try {
+      await this.api.mutate(this.path("/local-runtime/shutdown"), "POST", {});
+      this.shutdownState = "accepted";
+    } catch (error) {
+      if ([0, 502].includes(error.status)) this.shutdownState = "disconnected";
+      else {
+        this.shutdownState = null; this.message = error.status ? error.message : "Shutdown was not accepted. Reload settings and retry."; this.failed = true;
+        if (error.status === 401) { this.api.session = null; this.businessId = null; }
+      }
+    } finally {
+      this.busy = false; this.render();
+    }
   }
   listEditor(parent, title, entries, keys, permission) {
     const section = this.node("section"); section.append(this.node("h3", title));
