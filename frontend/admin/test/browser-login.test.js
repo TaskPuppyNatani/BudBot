@@ -11,12 +11,15 @@ const publicRoot = new URL("../public/", import.meta.url);
 const widgetRoot = new URL("../../widget/", import.meta.url);
 const account = token => ({ csrf_token: token, user: { email: "owner@example.test" }, businesses: [
   { business_id: "a", display_name: "Fixture business", role: "owner",
-    permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read"] },
+    permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read", "provider.read", "provider.write"] },
 ] });
 
 async function fixture(t) {
   const calls = []; const widgetNavigations = []; let token = 0;
   const faqs = []; const audit = [];
+  const provider = { configured: true, provider: "openai_compatible", model: "operator-model",
+    base_url: "http://compatible.example/v1", enabled: true, tool_calling: true,
+    credential_configured: false, runtime_status: "ready", runtime_code: null };
   const server = createServer(async (request, response) => {
     const path = new URL(request.url, "http://localhost").pathname;
     if (path === "/favicon.ico") { response.writeHead(204).end(); return; }
@@ -27,7 +30,7 @@ async function fixture(t) {
     }
     if (path.startsWith("/admin/")) {
       const files = { "/admin/": "index.html", "/admin/styles.css": "styles.css",
-        "/admin/src/app.js": "src/app.js", "/admin/src/client.js": "src/client.js", "/admin/src/forms.js": "src/forms.js" };
+        "/admin/src/app.js": "src/app.js", "/admin/src/client.js": "src/client.js", "/admin/src/forms.js": "src/forms.js", "/admin/src/provider.js": "src/provider.js" };
       if (!files[path]) { response.writeHead(404).end(); return; }
       response.writeHead(200, { "Content-Type": path.endsWith(".js") ? "text/javascript" : path.endsWith(".css") ? "text/css" : "text/html",
         "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'" });
@@ -63,6 +66,20 @@ async function fixture(t) {
       send(401, { detail: "Authentication is required." }); return;
     }
     if (path === "/api/v1/auth/me") { send(200, account(String(++token))); return; }
+    if (path === "/api/v1/businesses/a/provider" || path.startsWith("/api/v1/businesses/a/provider/")) {
+      if (request.method === "GET") { send(200, provider); return; }
+      if (request.headers["x-csrf-token"] !== String(token)) {
+        send(403, { detail: "A valid CSRF token is required for this request." }); return;
+      }
+      let text = ""; for await (const chunk of request) text += chunk;
+      call.payload = text ? JSON.parse(text) : null;
+      if (path.endsWith("/test")) {
+        send(200, { code: provider.model === "unknown-model" ? "AI_MODEL_UNAVAILABLE" : "AI_CONNECTION_OK", message: "private upstream marker" }); return;
+      }
+      if (request.method === "DELETE") Object.assign(provider, { credential_configured: false, enabled: false, runtime_status: "disabled", runtime_code: "AI_DISABLED" });
+      else Object.assign(provider, call.payload);
+      send(200, provider); return;
+    }
     if (path === "/api/v1/businesses/a/audit") { send(200, { items: audit, next_offset: null }); return; }
     if (path === "/api/v1/businesses/a/faqs" || path === "/api/v1/businesses/a/faqs/faq-one") {
       if (request.method === "GET") { send(200, faqs); return; }
@@ -231,5 +248,39 @@ test("native FAQ editing and audit navigation preserve CSRF, text rendering and 
   assert.equal(await page.getByRole("heading", { name: "admin.faq.created", exact: true }).count(), 1);
   assert.ok(calls.some(call => call.path.endsWith("/faqs") && call.method === "POST" && call.status === 201));
   assert.ok(calls.some(call => call.path.endsWith("/faqs/faq-one") && call.method === "PATCH" && call.status === 200));
+  assert.deepEqual(pageErrors, []);
+});
+
+test("native provider controls hide irrelevant endpoints and test saved settings with safe results", async t => {
+  const { page, calls, pageErrors } = await fixture(t);
+  await signIn(page);
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  await page.getByRole("button", { name: "AI Provider", exact: true }).click();
+  const endpoint = page.getByLabel("Backend-reachable base URL", { exact: true });
+  await endpoint.waitFor();
+  await page.getByLabel(/^Provider/).selectOption("anthropic");
+  assert.equal(await endpoint.isVisible(), false);
+  assert.equal(await page.getByRole("button", { name: "Test Connection", exact: true }).isEnabled(), false);
+  await page.getByLabel(/^Provider/).selectOption("openai_compatible");
+  assert.equal(await endpoint.isVisible(), true);
+  await page.getByRole("button", { name: "Save provider configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Test Connection", exact: true }).click();
+  await page.getByText(/^Connected successfully\./).waitFor();
+  assert.ok(calls.some(call => call.path.endsWith("/provider/test") && call.method === "POST" && call.status === 200));
+  assert.deepEqual(calls.find(call => call.path.endsWith("/provider/test")).payload, {});
+  await page.getByLabel("Model identifier", { exact: true }).fill("unknown-model");
+  await page.getByRole("button", { name: "Save provider configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Test Connection", exact: true }).click();
+  await page.getByText(/^The configured model or API endpoint was not found\./).waitFor();
+  assert.ok(!(await page.locator("body").textContent()).includes("private upstream marker"));
+  await page.getByRole("button", { name: "Reload settings", exact: true }).click();
+  await page.getByText("Not tested", { exact: true }).waitFor();
+  page.once("dialog", dialog => dialog.dismiss());
+  await page.getByRole("button", { name: "Remove credential and disable AI", exact: true }).click();
+  assert.equal(calls.filter(call => call.method === "DELETE").length, 0);
+  page.once("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Remove credential and disable AI", exact: true }).click();
+  await page.getByText(/^AI runtime: Disabled\./).waitFor();
+  assert.equal(calls.filter(call => call.method === "DELETE").length, 1);
   assert.deepEqual(pageErrors, []);
 });

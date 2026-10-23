@@ -1,8 +1,34 @@
 """Safe provider metadata and write-only credential input."""
 from typing import Literal
+from enum import StrEnum
 from pydantic import ConfigDict, Field, SecretStr, field_validator, model_validator
 from budbot.schemas.common import DomainSchema
 from budbot.core.config import Settings
+
+
+class ProviderDiagnosticCode(StrEnum):
+    OK = "AI_CONNECTION_OK"
+    DISABLED = "AI_DISABLED"
+    CONFIGURATION_INVALID = "AI_CONFIGURATION_INVALID"
+    CREDENTIAL_MISSING = "AI_CREDENTIAL_MISSING"
+    ENDPOINT_DENIED = "AI_ENDPOINT_DENIED"
+    UNREACHABLE = "AI_PROVIDER_UNREACHABLE"
+    TIMEOUT = "AI_PROVIDER_TIMEOUT"
+    AUTH_FAILED = "AI_PROVIDER_AUTH_FAILED"
+    MODEL_UNAVAILABLE = "AI_MODEL_UNAVAILABLE"
+    INCOMPATIBLE_RESPONSE = "AI_PROVIDER_BAD_RESPONSE"
+    PROVIDER_UNAVAILABLE = "AI_PROVIDER_UNAVAILABLE"
+    PROVIDER_ERROR = "AI_PROVIDER_ERROR"
+
+
+class ConnectionTestRequest(DomainSchema):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+
+class ProviderConnectionRead(DomainSchema):
+    code: ProviderDiagnosticCode
+    provider: Literal["openrouter", "openai_compatible", "openai", "anthropic"] | None = None
+    model: str | None = None
 
 class ProviderUpdate(DomainSchema):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
@@ -54,3 +80,5 @@ class ProviderRead(DomainSchema):
     base_url: str | None = None
     tool_calling: bool = False
     credential_configured: bool = False
+    runtime_status: Literal["ready", "disabled", "incomplete"] = "incomplete"
+    runtime_code: ProviderDiagnosticCode | None = None

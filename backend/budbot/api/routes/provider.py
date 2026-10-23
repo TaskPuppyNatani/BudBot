@@ -1,10 +1,10 @@
 """Authenticated business AI configuration and write-only credentials."""
 from typing import Annotated
 from uuid import UUID
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Body, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from budbot.api.dependencies import AdminAccess, get_session, require_business_permission
-from budbot.schemas.provider import ProviderRead, ProviderUpdate, CredentialUpdate
+from budbot.schemas.provider import ProviderRead, ProviderUpdate, CredentialUpdate, ConnectionTestRequest, ProviderConnectionRead, ProviderDiagnosticCode
 from budbot.services.provider_service import ProviderService
 from budbot.services.audit_service import record_audit_event
 
@@ -45,3 +45,16 @@ async def remove_credential(business_id: UUID, session: Session, access: Write, 
     svc = service(session, access, request)
     await svc.remove_credential()
     return await publish(session, access, svc, "credential_removed")
+
+
+@router.post("/test", response_model=ProviderConnectionRead)
+async def test_provider(business_id: UUID, session: Session, access: Write, request: Request,
+    payload: Annotated[ConnectionTestRequest, Body()] = ConnectionTestRequest()):
+    result = await service(session, access, request).test_connection(
+        request.app.state.ai_provider_registry, request.app.state.ai_harness_registry)
+    await record_audit_event(session, "admin.provider.connection_tested", actor_user_id=access.user_id,
+        business_id=access.business_id, resource_type="provider", resource_id=access.business_id,
+        details={"provider_action": "connection_tested", "provider": result.provider,
+                 "success": result.code == ProviderDiagnosticCode.OK, "diagnostic_code": result.code.value})
+    await session.commit()
+    return result

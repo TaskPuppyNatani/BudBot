@@ -375,7 +375,7 @@ test("provider configuration keeps credentials write-only and preserves them on 
   form(root, "Replace provider credential").dispatch("submit"); await app.task;
   assert.equal(input.value, ""); assert.equal(field(root, "New API key").value, "");
   assert.ok(!root.textContent.includes("synthetic-provider-test"));
-  assert.ok(!root.textContent.includes("Test Connection"));
+  assert.ok(button(root, "Test Connection"));
   button(root, "Remove credential and disable AI").dispatch("click"); await app.task;
   assert.equal(writes.at(-1).method, "DELETE");
   assert.match(root.textContent, /Credential configured: No/);
@@ -469,4 +469,98 @@ test("rejected local shutdown releases controls and does not claim success", asy
   assert.ok(!root.textContent.includes("BudBot is shutting down"));
   assert.equal(button(root, "Shut down BudBot").disabled, false);
   assert.equal(app.busy, false);
+});
+
+function providerDiagnostics(permissions = ["business.read", "provider.read", "provider.write"]) {
+  const result = setup(permissions);
+  const profile = { configured: true, provider: "openai_compatible", model: "saved/model", base_url: "http://provider.test/v1",
+    enabled: true, tool_calling: true, credential_configured: false, runtime_status: "ready", runtime_code: null };
+  const request = result.api.request;
+  result.api.request = async path => path.endsWith("/provider") ? structuredClone(profile) : request(path);
+  result.api.mutate = async (path, method, payload) => {
+    result.writes.push({ path, method, payload });
+    if (path.endsWith("/test")) return { code: "AI_CONNECTION_OK" };
+    Object.assign(profile, payload); return structuredClone(profile);
+  };
+  return { ...result, profile };
+}
+
+test("provider test uses saved tenant settings once, disables controls in flight and shows success", async () => {
+  const { root, app, api, profile, writes } = providerDiagnostics();
+  await app.start(); button(root, "AI Provider").dispatch("click"); await app.task;
+  assert.match(root.textContent, /AI runtime: Enabled and configured/);
+  assert.match(root.textContent, /Not tested/);
+  let resolve;
+  api.mutate = (path, method, payload) => { writes.push({ path, method, payload }); return new Promise(done => { resolve = done; }); };
+  const testButton = button(root, "Test Connection");
+  testButton.dispatch("click"); const task = app.task;
+  assert.equal(testButton.disabled, true); assert.equal(app.busy, true);
+  assert.match(root.textContent, /Testing saved configuration/);
+  testButton.dispatch("click"); assert.equal(writes.length, 1);
+  resolve({ code: "AI_CONNECTION_OK", message: "private marker", model: "private marker", provider: "private marker" }); await task;
+  assert.deepEqual(writes, [{ path: "/api/v1/businesses/a/provider/test", method: "POST", payload: {} }]);
+  assert.match(root.textContent, /Connected successfully/);
+  assert.match(root.textContent, /Provider: LM Studio \/ OpenAI-compatible/);
+  assert.ok(root.textContent.includes(`Model: ${profile.model}`));
+  assert.ok(!root.textContent.includes("private marker"));
+  assert.equal(button(root, "Test Connection").disabled, false); assert.equal(app.busy, false);
+  assert.equal(field(root, "New API key").value, "");
+});
+
+test("provider diagnostics display each fixed failure class without raw server data", async () => {
+  const failures = [
+    ["AI_DISABLED", /AI is disabled/], ["AI_CONFIGURATION_INVALID", /configuration is incomplete/],
+    ["AI_CREDENTIAL_MISSING", /requires a stored credential/], ["AI_ENDPOINT_DENIED", /not deployment-approved/],
+    ["AI_PROVIDER_UNREACHABLE", /Check that the server .* is running/], ["AI_PROVIDER_TIMEOUT", /time limit/],
+    ["AI_PROVIDER_AUTH_FAILED", /rejected the stored credential/], ["AI_MODEL_UNAVAILABLE", /model or API endpoint was not found/],
+    ["AI_PROVIDER_BAD_RESPONSE", /incompatible response/], ["AI_PROVIDER_UNAVAILABLE", /temporarily unavailable or rate limited/],
+    ["AI_PROVIDER_ERROR", /could not be completed/], ["private marker", /could not be completed/],
+  ];
+  for (const [code, explanation] of failures) {
+    const { root, app, api } = providerDiagnostics();
+    api.mutate = async () => ({ code, message: "<script>private marker</script>", response: "private marker" });
+    await app.start(); button(root, "AI Provider").dispatch("click"); await app.task;
+    button(root, "Test Connection").dispatch("click"); await app.task;
+    assert.match(root.textContent, /Failed/); assert.match(root.textContent, explanation);
+    assert.ok(!root.textContent.includes("private marker")); assert.equal(app.busy, false);
+  }
+});
+
+test("provider test requires write permission and saved edits; changes and tenant switching clear results", async () => {
+  const readOnly = providerDiagnostics(["business.read", "provider.read"]);
+  await readOnly.app.start(); button(readOnly.root, "AI Provider").dispatch("click"); await readOnly.app.task;
+  assert.equal(button(readOnly.root, "Test Connection"), undefined);
+  assert.equal(readOnly.writes.length, 0);
+  const { root, app, writes } = providerDiagnostics();
+  await app.start(); button(root, "AI Provider").dispatch("click"); await app.task;
+  button(root, "Test Connection").dispatch("click"); await app.task;
+  const model = field(root, "Model identifier"); model.value = "new/model"; model.dispatch("input");
+  assert.equal(button(root, "Test Connection").disabled, true); assert.match(root.textContent, /Not tested/);
+  button(root, "Test Connection").dispatch("click"); assert.equal(writes.length, 1);
+  form(root, "Provider configuration").dispatch("submit"); await app.task;
+  assert.equal(app.dirty, false); assert.equal(button(root, "Test Connection").disabled, false);
+  button(root, "Test Connection").dispatch("click"); await app.task;
+  assert.match(root.textContent, /Connected successfully/);
+  const businesses = field(root, "Business"); businesses.value = "b"; businesses.dispatch("change"); await app.task;
+  assert.equal(app.providerTest, null); assert.ok(!root.textContent.includes("Connected successfully"));
+});
+
+test("runtime status distinguishes disabled and incomplete; test transport errors remain safe and recoverable", async () => {
+  for (const [status, label] of [["disabled", "Disabled"], ["incomplete", "Configuration incomplete"]]) {
+    const { root, app, profile, api } = providerDiagnostics(); profile.runtime_status = status;
+    await app.start(); button(root, "AI Provider").dispatch("click"); await app.task;
+    assert.ok(root.textContent.includes(`AI runtime: ${label}`));
+    api.mutate = async () => { throw new ApiError(500, "private marker"); };
+    button(root, "Test Connection").dispatch("click"); await app.task;
+    assert.match(root.textContent, /could not be completed/); assert.ok(!root.textContent.includes("private marker"));
+    assert.equal(button(root, "Test Connection").disabled, false);
+  }
+  for (const status of [401, 403]) {
+    const { root, app, api } = providerDiagnostics();
+    await app.start(); button(root, "AI Provider").dispatch("click"); await app.task;
+    api.mutate = async () => { throw new ApiError(status, "private marker"); };
+    button(root, "Test Connection").dispatch("click"); await app.task;
+    assert.ok(!root.textContent.includes("private marker")); assert.equal(app.busy, false);
+    assert.ok(button(root, status === 401 ? "Sign in" : "Test Connection"));
+  }
 });

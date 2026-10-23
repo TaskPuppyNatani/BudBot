@@ -259,6 +259,50 @@ If authoritative data is unavailable, the assistant should say it cannot verify 
 
 ## Testing
 
+### Saved tenant connection diagnostics (M9B Pass 4)
+
+Owners can use **Admin → AI Provider → Test Connection** after saving settings
+and credentials. `POST /api/v1/businesses/{business_id}/provider/test` requires
+the existing owner-only `provider.write` permission and session CSRF token. Its
+empty body cannot override the saved endpoint, provider, model or credential.
+Compatible endpoints are checked against the exact deployment allowlist before
+decryption or network access. Keyless compatible servers are supported. Hosted
+providers require a stored credential; legacy/global credentials are never used
+by this action.
+
+The test reuses `ProviderService.runtime()` and the existing provider/harness
+registries. It sends one fixed short user prompt with no tools, at most 16 output
+tokens, a maximum 10-second operation timeout and a maximum 3-second connect
+timeout (smaller configured limits still apply). It may incur a minimal provider
+charge or load a local model. There are no provider retries, discovery requests,
+customer sessions, chat history, or business configuration writes. A successful
+response verifies transport/authentication/model request acceptance and response
+decoding; it does not prove tool calling or customer-answer quality. A cold local
+model may need to be loaded before retrying a timeout.
+
+The response contains only the saved provider/model identity and one stable code:
+`AI_CONNECTION_OK`, `AI_DISABLED`, `AI_CONFIGURATION_INVALID`,
+`AI_CREDENTIAL_MISSING`, `AI_ENDPOINT_DENIED`, `AI_PROVIDER_UNREACHABLE`,
+`AI_PROVIDER_TIMEOUT`, `AI_PROVIDER_AUTH_FAILED`, `AI_MODEL_UNAVAILABLE`,
+`AI_PROVIDER_BAD_RESPONSE`, `AI_PROVIDER_UNAVAILABLE`, or `AI_PROVIDER_ERROR`.
+The shared transport treats HTTP 404 or a structured `model_not_found` error code
+on HTTP 400/422 as model/endpoint unavailable. Other unrecognized request
+rejections map to incompatible response, without parsing free-form upstream
+error text. Rate limits and upstream server failures map to
+temporarily unavailable. No raw provider content or exception text is returned.
+
+Provider reads also include a metadata-based `runtime_status` (`ready`,
+`disabled`, `incomplete`) and an optional fixed `runtime_code`. `ready` means
+locally configured, not a live connectivity or credential-validity guarantee.
+Last-test results are kept only in the current Admin view and clear on reload,
+business switch or settings/credential changes; no migration is required.
+
+`admin.provider.connection_tested` audit events contain only the fixed action,
+allowlisted provider identity, success boolean and diagnostic code, with the
+normal actor/business relation. Audit reads re-project these fields through
+typed allowlists. Model names, endpoints, prompts, responses, keys and ciphertext
+are excluded from diagnostic audit details.
+
 Each provider interface must have contract tests.
 
 The mock providers should allow deterministic testing of:

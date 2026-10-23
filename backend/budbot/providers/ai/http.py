@@ -29,6 +29,7 @@ async def post_json(
         timeout=config.timeout_seconds,
         connect=min(config.connect_timeout_seconds, config.timeout_seconds),
     )
+    model_rejection = False
     try:
         async with asyncio.timeout(config.timeout_seconds):
             async with client.stream(
@@ -40,7 +41,11 @@ async def post_json(
                     raise AIError("AI_MODEL_UNAVAILABLE")
                 if response.status_code == 429 or response.status_code >= 500:
                     raise AIError("AI_PROVIDER_UNAVAILABLE")
-                if response.status_code < 200 or response.status_code >= 300:
+                # Some compatible providers use 400/422 with a machine-readable
+                # model code. Read only the same bounded body as normal results;
+                # never interpret or expose free-form upstream error messages.
+                model_rejection = response.status_code in {400, 422}
+                if not model_rejection and (response.status_code < 200 or response.status_code >= 300):
                     raise AIError("AI_PROVIDER_BAD_RESPONSE")
                 chunks: list[bytes] = []
                 size = 0
@@ -65,5 +70,10 @@ async def post_json(
     if not isinstance(payload, Mapping) or not all(
         isinstance(key, str) for key in payload
     ):
+        raise AIError("AI_PROVIDER_BAD_RESPONSE")
+    if model_rejection:
+        error = payload.get("error")
+        if isinstance(error, Mapping) and error.get("code") == "model_not_found":
+            raise AIError("AI_MODEL_UNAVAILABLE")
         raise AIError("AI_PROVIDER_BAD_RESPONSE")
     return payload

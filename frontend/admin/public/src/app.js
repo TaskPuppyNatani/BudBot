@@ -1,4 +1,5 @@
 import { AdminClient } from "./client.js";
+import { PROVIDER_LABELS, CONNECTION_MESSAGES } from "./provider.js";
 import { DAYS, FLAGS, OVERRIDE_FIELDS, hoursRows, hoursPayload, overridePatch, previewUrl, brandAssetUrl, encodeImage } from "./forms.js";
 
 export class AdminApp {
@@ -28,8 +29,8 @@ export class AdminApp {
     for (const { node, permission, condition } of this.controls)
       node.disabled = this.busy || (permission && !this.api.can(this.businessId, permission)) || !condition();
   }
-  button(text, action, permission = null, className = "") {
-    const button = this.control(this.node("button", text, { type: "button", className }), permission);
+  button(text, action, permission = null, className = "", condition = () => true) {
+    const button = this.control(this.node("button", text, { type: "button", className }), permission, condition);
     button.addEventListener("click", () => { this.task = action(); });
     return button;
   }
@@ -139,6 +140,7 @@ export class AdminApp {
   }
   resetManagementData() {
     this.providerProfile = null;
+    this.providerTest = null; this.providerTesting = false; this.providerConnectionPanel = null;
     this.faqs = []; this.editFaqId = null; this.auditPage = null;
     this.auditOffset = 0; this.panelError = ""; this.panelLoaded = false;
   }
@@ -151,7 +153,10 @@ export class AdminApp {
       const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : `/audit?limit=25&offset=${offset}`));
       if (id !== this.businessId) return;
       if (this.tab === "FAQs") this.faqs = result;
-      else if (this.tab === "AI Provider") this.providerProfile = result;
+      else if (this.tab === "AI Provider") {
+        if (JSON.stringify(this.providerProfile) !== JSON.stringify(result)) this.providerTest = null;
+        this.providerProfile = result;
+      }
       else { this.auditPage = result; this.auditOffset = offset; }
       this.panelLoaded = true;
     } catch (error) {
@@ -384,32 +389,39 @@ export class AdminApp {
     const section = this.managementSection("AI Provider", "provider.read");
     if (!this.api.can(this.businessId, "provider.read") || !this.panelLoaded) return section;
     const profile = this.providerProfile; const permission = "provider.write";
+    section.append(this.node("p", `AI runtime: ${{ ready: "Enabled and configured", disabled: "Disabled", incomplete: "Configuration incomplete" }[profile.runtime_status] || "Configuration incomplete"}. Connection health is verified only by Test Connection.`));
+    if (profile.runtime_code) section.append(this.node("p", CONNECTION_MESSAGES[profile.runtime_code] || CONNECTION_MESSAGES.AI_CONFIGURATION_INVALID));
     section.append(this.node("p", `Credential configured: ${profile.credential_configured ? "Yes" : "No"}. Existing credentials are never returned to this browser.`));
     section.append(this.node("p", "Save configuration disabled first, set the credential, then enable AI. Removing a credential disables AI. Remove the credential before changing provider identity."));
     let provider, model, endpoint, enabled, tools;
     const form = this.form("Provider configuration", permission, async () => {
       await this.api.mutate(this.path("/provider"), "PUT", { provider: provider.value, model: model.value.trim(), enabled: enabled.checked,
         base_url: provider.value === "openai_compatible" ? endpoint.value.trim() : null, tool_calling: tools.checked });
+      this.dirty = false; this.providerTest = null;
       await this.loadManagementPanel(); this.render();
     });
     provider = this.field(form, "Provider", profile.provider || "openrouter", { permission, options: [["openrouter", "OpenRouter"], ["openai_compatible", "LM Studio / OpenAI-compatible"], ["openai", "OpenAI"], ["anthropic", "Anthropic"]] });
     model = this.field(form, "Model identifier", profile.model, { permission, required: true, maxLength: 200 });
     endpoint = this.field(form, "Backend-reachable base URL", profile.base_url, { permission, maxLength: 2048, condition: () => provider.value === "openai_compatible" });
+    const endpointField = form.children[form.children.length - 1];
     const guide = this.node("p"); form.append(guide);
     const refresh = () => {
       endpoint.required = provider.value === "openai_compatible";
-      guide.textContent = provider.value === "openai_compatible" ? "Use an endpoint reachable FROM the BudBot backend container. Container localhost points to BudBot itself. Local servers may not need a key." : "This provider uses its standard cloud endpoint and requires an API key.";
+      endpointField.hidden = provider.value !== "openai_compatible";
+      guide.textContent = provider.value === "openai_compatible" ? "Use a deployment-approved endpoint reachable FROM the BudBot backend container. Container localhost points to BudBot itself. Local servers may not require a credential. Model identifiers are server-specific."
+        : `${PROVIDER_LABELS[provider.value]} uses its standard cloud endpoint and requires a stored credential. Use the provider's exact model identifier${provider.value === "openrouter" ? " (including its publisher prefix when required)" : ""}.`;
       this.updateControls();
     };
     provider.addEventListener("change", refresh); refresh();
     enabled = this.field(form, "AI enabled", profile.enabled, { permission, type: "checkbox" });
     tools = this.field(form, "Model supports tool calling", profile.tool_calling, { permission, type: "checkbox" });
-    form.append(this.node("p", "Declare tool calling only when your selected model supports it. Customer chat requires verified tools; capabilities are not probed."));
+    form.append(this.node("p", "Declare tool calling only when your selected model supports it. Customer AI chat requires verified tools; Test Connection does not verify tool calling or business answers."));
     this.saveButton(form, permission, "Save provider configuration"); section.append(form);
     let credential;
     const secretForm = this.form("Replace provider credential", permission, async () => {
       try { await this.api.mutate(this.path("/provider/credential"), "PUT", { credential: credential.value }); }
       finally { credential.value = ""; }
+      this.dirty = false; this.providerTest = null;
       await this.loadManagementPanel(); this.render();
     });
     credential = this.field(secretForm, "New API key", "", { permission, type: "password", required: true, maxLength: 10000 });
@@ -417,9 +429,46 @@ export class AdminApp {
     this.saveButton(secretForm, permission, "Set or replace credential");
     secretForm.append(this.button("Remove credential and disable AI", () => {
       if (!this.confirm.call(globalThis, "Remove this business's provider credential and disable AI?")) return;
-      return this.run(async () => { await this.api.mutate(this.path("/provider/credential"), "DELETE"); await this.loadManagementPanel(); this.render(); }, "Credential removed; AI disabled.");
+      return this.run(async () => { await this.api.mutate(this.path("/provider/credential"), "DELETE"); this.dirty = false; this.providerTest = null; await this.loadManagementPanel(); this.render(); }, "Credential removed; AI disabled.");
     }, permission));
-    section.append(secretForm); return section;
+    section.append(secretForm);
+    this.providerConnectionPanel = this.node("section", "", { role: "status", "aria-live": "polite" });
+    section.append(this.providerConnectionPanel);
+    this.renderProviderConnection();
+    section.append(this.node("p", "Test uses saved settings and the stored credential only. Save or discard edits first. One small request may incur a minimal provider charge. Results clear on reload or configuration changes."));
+    if (this.api.can(this.businessId, permission))
+      section.append(this.button("Test Connection", () => this.testProviderConnection(), permission, "", () => !this.dirty));
+    for (const input of [provider, model, endpoint, enabled, tools, credential]) {
+      const edited = () => { this.providerTest = null; this.renderProviderConnection(); this.updateControls(); };
+      input.addEventListener("input", edited); input.addEventListener("change", edited);
+    }
+    return section;
+  }
+  renderProviderConnection() {
+    if (!this.providerConnectionPanel) return;
+    const code = this.providerTest?.code;
+    this.providerConnectionPanel.replaceChildren(this.node("h3", "Connection status"),
+      this.node("p", this.providerTesting ? "Testing saved configuration…" : !code ? "Not tested" : code === "AI_CONNECTION_OK" ? "Connected" : "Failed"));
+    if (code) {
+      this.providerConnectionPanel.append(this.node("p", CONNECTION_MESSAGES[code] || CONNECTION_MESSAGES.AI_PROVIDER_ERROR));
+      this.providerConnectionPanel.append(this.node("p", `Provider: ${PROVIDER_LABELS[this.providerProfile.provider] || "Unconfigured"}`), this.node("p", `Model: ${this.providerProfile.model || "Unconfigured"}`));
+    }
+  }
+  async testProviderConnection() {
+    if (this.busy || this.dirty || !this.api.can(this.businessId, "provider.write")) return;
+    const id = this.businessId;
+    return this.run(async () => {
+      this.providerTesting = true; this.providerTest = null; this.renderProviderConnection();
+      let result;
+      try { result = await this.api.mutate(this.path("/provider/test"), "POST", {}); }
+      catch (error) {
+        if ([401, 403].includes(error.status)) throw { status: error.status, message: error.status === 401 ? "Your session expired. Sign in again." : "You do not have permission to test this provider." };
+        result = { code: "AI_PROVIDER_ERROR" };
+      } finally { this.providerTesting = false; }
+      if (id !== this.businessId) return;
+      this.providerTest = { code: Object.hasOwn(CONNECTION_MESSAGES, result?.code) ? result.code : "AI_PROVIDER_ERROR" };
+      this.render();
+    });
   }
   businessForm() {
     const permission = "business.write"; let fields, flags, payments, policies;

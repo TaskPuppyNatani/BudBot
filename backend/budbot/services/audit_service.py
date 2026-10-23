@@ -12,6 +12,7 @@ from budbot.core.tenancy import TenantContext
 from budbot.database.tenant import TenantScopedRepository
 from budbot.models.auth import AuditEvent
 from budbot.schemas.audit import AuditEventRead, AuditHistoryRead
+from budbot.schemas.provider import ProviderDiagnosticCode
 
 _REDACTED_KEY_FRAGMENTS = (
     "password",
@@ -56,8 +57,15 @@ def audit_details_for_read(details: Mapping[str, Any] | None) -> dict[str, objec
     changed = safe.get("changed_fields")
     if isinstance(changed, str):
         result["changed_fields"] = ",".join(sorted(set(changed.split(",")) & _AUDIT_CHANGE_FIELDS))
-    if safe.get("provider_action") in {"configuration_updated", "credential_set", "credential_replaced", "credential_removed"}:
+    if safe.get("provider_action") in {"configuration_updated", "credential_set", "credential_replaced", "credential_removed", "connection_tested"}:
         result["provider_action"] = safe["provider_action"]
+    if safe.get("provider_action") == "connection_tested":
+        if safe.get("provider") in {"openrouter", "openai_compatible", "openai", "anthropic"}:
+            result["provider"] = safe["provider"]
+        if safe.get("diagnostic_code") in {code.value for code in ProviderDiagnosticCode}:
+            result["diagnostic_code"] = safe["diagnostic_code"]
+        if type(safe.get("success")) is bool:
+            result["success"] = safe["success"]
     if safe.get("method") == "local_cli":
         result["method"] = "local_cli"
     return result
