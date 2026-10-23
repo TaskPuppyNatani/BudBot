@@ -18,6 +18,50 @@ catalog, and the widget are not implemented yet.
 
 ## Docker development
 
+### One-command local launch
+
+With Python 3, Docker Engine/Compose V2, and your existing private `.env` configured:
+
+```bash
+./scripts/start_budbot.sh
+```
+
+The shared launcher checks Docker, builds/starts the existing `budbot` development
+stack if needed, waits up to 15 minutes for database/backend readiness and the
+Admin page, then opens <http://localhost:8000/admin/>. Compose retains its existing
+Alembic-before-server startup path. A healthy running stack is reused without
+rebuilding or creating demo data. First-owner setup remains the explicit local
+workflow in [self-hosting](docs/self-hosting.md#first-owner-account).
+
+Missing configuration produces setup instructions; this launch command never
+creates or rewrites `.env`. Startup failures show recovery guidance without
+printing Docker output or configuration values. Builds have a 30-minute bound.
+Ctrl+C cancels the launcher; detached services may remain running. Reconnect by
+launching again, or stop safely with `./scripts/stop_budbot.sh`. Data volumes stay
+in place. The existing Control Center remains available for its Start/Stop/Restart
+and branding workflows; its lifecycle and window handling are unchanged.
+
+After startup, a read-only diagnostic inside the backend container checks TCP
+reachability for enabled tenant OpenAI-compatible endpoints on the deployment
+allowlist. Unavailable optional AI produces a warning while BudBot stays usable.
+The probe sends no API credentials or inference requests, does not start LM Studio,
+and does not validate the configured model or authentication. No provider keys
+are read or decrypted. Diagnostic failures also remain warnings.
+
+Optional Linux application-menu installation (no root):
+
+```bash
+./scripts/start_budbot.sh --install-desktop
+```
+
+Find **BudBot** in the application menu. The entry is generated for this checkout
+under `${XDG_DATA_HOME:-~/.local/share}/applications/budbot.desktop`; reinstall it
+after moving the checkout. It shows terminal progress and keeps warnings/errors
+visible until Enter is pressed. A successful launch opens the Admin page and exits
+the launcher without stopping services. Browser sessions still require owner sign-in.
+
+For initial configuration and the original foreground development command:
+
 ```bash
 cp .env.example .env
 ./scripts/dev.sh

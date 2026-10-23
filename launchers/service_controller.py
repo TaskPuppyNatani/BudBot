@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+import webbrowser
 from collections.abc import Callable
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
@@ -19,6 +20,8 @@ from uuid import UUID
 Progress = Callable[[str], None]
 DOCKER_COMMAND_TIMEOUT_SECONDS = 30 * 60
 LOCAL_WIDGET_URL = "http://127.0.0.1:8000/widget/"
+LOCAL_ADMIN_URL = "http://localhost:8000/admin/"
+READY_TIMEOUT_SECONDS = 900
 
 
 class BudBotServiceError(RuntimeError):
@@ -60,7 +63,11 @@ class BudBotServiceController:
             *arguments,
         ]
 
-    def _run(self, arguments: list[str], failure: str) -> str:
+    def _run(
+        self, arguments: list[str], failure: str, *,
+        timeout: float = DOCKER_COMMAND_TIMEOUT_SECONDS,
+        record_output: bool = True,
+    ) -> str:
         is_windows = self.operating_system == "Windows"
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if is_windows else 0
         startupinfo = None
@@ -69,7 +76,8 @@ class BudBotServiceController:
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         try:
             with self.log_file.open("a", encoding="utf-8") as log:
-                log.write("\n$ " + subprocess.list2cmdline(arguments) + "\n")
+                log.write("\n$ " + (subprocess.list2cmdline(arguments) if record_output
+                          else "Docker command (output suppressed by launcher)") + "\n")
                 log.flush()
                 try:
                     result = subprocess.run(
@@ -82,25 +90,29 @@ class BudBotServiceController:
                         shell=False,
                         creationflags=creationflags,
                         startupinfo=startupinfo,
-                        timeout=DOCKER_COMMAND_TIMEOUT_SECONDS,
+                        timeout=timeout,
                     )
                 except subprocess.TimeoutExpired as exc:
                     output = exc.stdout or ""
                     if isinstance(output, bytes):
                         output = output.decode("utf-8", errors="replace")
-                    log.write(output)
+                    if record_output:
+                        log.write(output)
                     log.flush()
                     guidance = failure or "The Docker command did not finish."
+                    duration = f"{timeout / 60:g} minutes" if timeout >= 60 else f"{timeout:g} seconds"
                     raise BudBotServiceError(
-                        f"{guidance}\nThe Docker command timed out after "
-                        f"{DOCKER_COMMAND_TIMEOUT_SECONDS // 60} minutes. "
+                        f"{guidance}\nThe Docker command timed out after {duration}. "
                         f"Check Docker, then use Stop or Restart before retrying. "
                         f"Details: {self.log_file}"
                     ) from None
                 output = result.stdout or ""
-                log.write(output)
+                if record_output:
+                    log.write(output)
                 log.flush()
         except OSError as exc:
+            if not record_output:
+                raise BudBotServiceError("Could not run Docker. Check its installation and daemon access.") from None
             raise BudBotServiceError(f"Could not run Docker: {exc}") from None
         if any(word in output.lower() for word in ("building", "pulling", "extracting")):
             self.progress("Building the local containers… first launch may take a few minutes.")
@@ -108,7 +120,7 @@ class BudBotServiceController:
             raise BudBotServiceError(f"{failure}\nDetails: {self.log_file}")
         return output
 
-    def _check_docker(self) -> None:
+    def _check_docker(self, *, record_output: bool = True) -> None:
         if shutil.which("docker") is None:
             platform_hint = (
                 "Install Docker Desktop with Docker Compose."
@@ -117,13 +129,15 @@ class BudBotServiceController:
             )
             raise BudBotServiceError(f"Docker was not found. {platform_hint}")
         try:
-            self._run(["docker", "compose", "version"], "Docker Compose is unavailable.")
+            self._run(["docker", "compose", "version"], "Docker Compose is unavailable.",
+                      timeout=10, record_output=record_output)
         except BudBotServiceError as exc:
             raise BudBotServiceError(
                 f"Docker Compose is unavailable. Install or enable Compose V2.\n{exc}"
             ) from None
         try:
-            self._run(["docker", "info", "--format", "{{.ServerVersion}}"], "")
+            self._run(["docker", "info", "--format", "{{.ServerVersion}}"], "",
+                      timeout=10, record_output=record_output)
         except BudBotServiceError:
             if self.operating_system == "Windows":
                 guidance = "Open Docker Desktop and wait until it says Docker is running."
@@ -143,20 +157,31 @@ class BudBotServiceController:
                 raise BudBotServiceError(f"Could not create local .env: {exc}") from None
         # Never edit or rewrite a user's existing configuration.
 
-    def _wait_ready(self) -> None:
+    @staticmethod
+    def _probe_ready(asset_url: str, *, timeout: float = 2) -> bool:
+        try:
+            with urlopen("http://127.0.0.1:8000/ready", timeout=timeout):
+                pass
+            with urlopen(asset_url, timeout=timeout):
+                pass
+            return True
+        except (OSError, URLError, TimeoutError):
+            return False
+
+    def _wait_ready(
+        self, asset_url: str = LOCAL_WIDGET_URL, *,
+        timeout_seconds: float = READY_TIMEOUT_SECONDS, record_output: bool = True,
+    ) -> None:
         self.progress("Waiting for PostgreSQL migrations and backend health…")
-        deadline = time.monotonic() + 900
+        deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
-            try:
-                with urlopen("http://127.0.0.1:8000/ready", timeout=2):
-                    pass
-                with urlopen("http://127.0.0.1:8000/widget/", timeout=2):
-                    pass
+            if self._probe_ready(asset_url):
                 return
-            except (OSError, URLError, TimeoutError):
+            else:
                 status = self._run(
-                    self._compose("ps", "--format", "json", "backend"),
+                    self._compose("ps", "--all", "--format", "json", "backend"),
                     "Could not check the backend startup status.",
+                    timeout=10, record_output=record_output,
                 )
                 try:
                     containers = json.loads(status) if status.strip() else []
@@ -174,9 +199,9 @@ class BudBotServiceController:
                 failed_states = {"restarting", "exited", "dead"}
                 failed = next(
                     (
-                        item.get("State", "unknown").lower()
+                        str(item.get("State", "unknown")).lower()
                         for item in containers
-                        if item.get("State", "").lower() in failed_states
+                        if isinstance(item, dict) and str(item.get("State", "")).lower() in failed_states
                     ),
                     None,
                 )
@@ -187,7 +212,10 @@ class BudBotServiceController:
                 self.progress("BudBot is still starting…")
                 time.sleep(3)
         raise BudBotServiceError(
-            f"BudBot did not become healthy within 15 minutes. Details: {self.log_file}"
+            f"BudBot did not become healthy within {timeout_seconds / 60:g} minutes. "
+            f"Check Docker and backend startup/migrations with "
+            f"docker compose -f docker-compose.dev.yml --project-name budbot logs backend db. "
+            f"Existing data is preserved. Details: {self.log_file}"
         )
 
     @staticmethod
@@ -207,21 +235,76 @@ class BudBotServiceController:
             raise BudBotServiceError("The preview URL did not contain a valid business ID.")
         return business_id
 
-    def start(self) -> str:
+    def _start_services(self, *, admin: bool = False) -> None:
+        """Share Compose startup between Control Center and the Admin launcher."""
         self.progress("Checking Docker and Docker Compose…")
-        self._check_docker()
+        if admin:
+            self._check_docker(record_output=False)
+            if not (self.root / ".env").is_file():
+                raise BudBotServiceError(
+                    "Local .env is missing. From the repository, copy .env.example to .env "
+                    "and configure it privately, then launch again. No configuration was created."
+                )
+        else:
+            self._check_docker()
         self.progress("Preparing local settings without overwriting existing configuration…")
-        self._prepare_configuration()
+        if not admin:
+            self._prepare_configuration()
         self._run(
             self._compose("config", "--quiet"),
-            "The development Compose configuration is invalid. Existing .env was left untouched.",
+            "The development Compose configuration is invalid. Check Compose files and .env syntax privately. "
+            "Existing .env was left untouched.",
+            timeout=30, record_output=not admin,
         )
-        self.progress("Building and starting BudBot and PostgreSQL…")
+        if admin and self._probe_ready(LOCAL_ADMIN_URL, timeout=1.5):
+            self.progress("BudBot is already running; reusing the healthy stack.")
+            return
+        self.progress("Building and starting BudBot and PostgreSQL… first launch may take several minutes.")
         self._run(
             self._compose("up", "--detach", "--build", "db", "backend"),
-            "BudBot could not start. Check Docker or a local port conflict on 8000/5432.",
+            "BudBot could not start. Check Docker or a local port conflict on 8000/5432. "
+            "For service/migration details, inspect locally: "
+            "docker compose -f docker-compose.dev.yml --project-name budbot logs backend db.",
+            record_output=not admin,
         )
-        self._wait_ready()
+        if admin:
+            self._wait_ready(LOCAL_ADMIN_URL, record_output=False)
+        else:
+            self._wait_ready()
+
+    def launch(self) -> str:
+        """Start/reuse services for browser administration without seeding data."""
+        self._start_services(admin=True)
+        self.progress("BudBot is ready.")
+        return LOCAL_ADMIN_URL
+
+    def local_ai_warning(self) -> str | None:
+        """Read-only, credential-free network diagnostic from the backend container."""
+        self.progress("Checking optional compatible AI connectivity from the backend…")
+        try:
+            probe = Path(__file__).with_name("local_ai_probe.py").read_text(encoding="utf-8")
+            status = self._run(
+                self._compose("exec", "-T", "backend", "python", "-c", probe),
+                "Optional AI connectivity could not be checked.",
+                timeout=10, record_output=False,
+            ).strip()
+        except (BudBotServiceError, OSError):
+            status = "unknown"
+        if status in {"reachable", "not-configured"}:
+            return None
+        if status == "unavailable":
+            return ("BudBot is running, but a configured compatible AI endpoint is unreachable "
+                    "from the backend. Start the configured local server (such as LM Studio), "
+                    "or check its address, bind/firewall settings and Docker host reachability. "
+                    "Review Admin → AI Provider. LM Studio is optional and was not started.")
+        if status == "not-approved":
+            return ("BudBot is running, but a configured compatible AI endpoint is no longer "
+                    "deployment-approved. Ask the operator to review the exact endpoint allowlist.")
+        return ("BudBot is running. Optional AI connectivity could not be checked; "
+                "review Admin → AI Provider. This does not prevent opening the dashboard.")
+
+    def start(self) -> str:
+        self._start_services()
         self.progress("Creating or reusing the local demo business and location…")
         business_id = self.create_demo_business()
         url = f"http://127.0.0.1:8000/widget/?business_id={business_id}"
@@ -323,13 +406,67 @@ class BudBotServiceController:
             return None
 
 
+def install_desktop(repository_root: Path | None = None) -> Path:
+    """Install a checkout-specific Linux menu entry without root or shell commands."""
+    if not sys.platform.startswith("linux"):
+        raise BudBotServiceError("The application-menu installer supports Linux only.")
+    root = (repository_root or Path(__file__).resolve().parents[1]).resolve()
+    script = root / "launchers" / "service_controller.py"
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    values = (str(root), str(script), sys.executable, str(data_home))
+    if not data_home.is_absolute() or any(any(ord(c) < 32 for c in value) for value in values):
+        raise BudBotServiceError("The checkout and XDG_DATA_HOME must use absolute paths without control characters.")
+    if not script.is_file():
+        raise BudBotServiceError("The shared BudBot service controller is missing from this checkout.")
+
+    def quote_exec(value: str) -> str:
+        # Escape both the desktop-entry string layer and the Exec argument layer.
+        escaped = "".join("\\" + c if c in '\\"`$' else c for c in value.replace("%", "%%"))
+        return '"' + escaped.replace("\\", "\\\\") + '"'
+
+    destination = data_home / "applications" / "budbot.desktop"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    working_directory = str(root).replace("\\", "\\\\")
+    destination.write_text(
+        "[Desktop Entry]\nVersion=1.0\nType=Application\nName=BudBot\n"
+        "Comment=Start BudBot locally and open the Admin dashboard\n"
+        f"Exec={quote_exec(sys.executable)} {quote_exec(str(script))} launch-desktop\n"
+        f"Path={working_directory}\n"
+        "Icon=applications-internet\nTerminal=true\nStartupNotify=false\n"
+        "Categories=Development;WebDevelopment;\n",
+        encoding="utf-8",
+    )
+    destination.chmod(0o644)
+    return destination
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = argv if argv is not None else sys.argv[1:]
     action = arguments[0] if arguments else "start"
-    controller = BudBotServiceController()
-    controller.progress = lambda message: print(f"# {message}", flush=True)
+    desktop = action == "launch-desktop"
+    needs_attention = False
+    exit_code = 0
     try:
-        if action == "start":
+        if action == "install-desktop":
+            print(f"Installed BudBot application-menu entry: {install_desktop()}")
+            return 0
+        controller = BudBotServiceController()
+        controller.progress = lambda message: print(f"# {message}", flush=True)
+        if action in {"launch", "launch-desktop"}:
+            url = controller.launch()
+            print(f"Admin: {url}", flush=True)
+            try:
+                opened = webbrowser.open(url, new=2)
+            except Exception:
+                opened = False
+            if not opened:
+                print(f"WARNING: The browser could not open automatically. Open {url} manually.", flush=True)
+                needs_attention = True
+            warning = controller.local_ai_warning()
+            if warning:
+                print(f"WARNING: {warning}", flush=True)
+                needs_attention = True
+        elif action == "start":
             url = controller.start()
             print(f"PREVIEW_URL={url}", flush=True)
             if len(arguments) > 1:
@@ -342,12 +479,27 @@ def main(argv: list[str] | None = None) -> int:
         elif action == "demo":
             print(controller.create_demo_business(), flush=True)
         else:
-            print("Usage: service_controller.py [start|stop|restart]", file=sys.stderr)
+            print("Usage: service_controller.py [launch|install-desktop|start|stop|restart|demo]", file=sys.stderr)
             return 2
     except BudBotServiceError as exc:
         print(f"ERROR: {exc}", file=sys.stderr, flush=True)
-        return 1
-    return 0
+        exit_code = 1
+    except KeyboardInterrupt:
+        print("\nCancelled. Detached Docker services may still be running or starting. "
+              "Rerun scripts/start_budbot.sh to reconnect, or scripts/stop_budbot.sh to stop safely.",
+              file=sys.stderr, flush=True)
+        return 130
+    except Exception:
+        print("ERROR: The launcher could not complete. Check Docker access and local file permissions, "
+              "then retry scripts/start_budbot.sh. Existing services and data were left in place.",
+              file=sys.stderr, flush=True)
+        exit_code = 1
+    if desktop and (exit_code or needs_attention) and sys.stdin.isatty():
+        try:
+            input("Press Enter to close this launcher window…")
+        except (EOFError, KeyboardInterrupt):
+            pass
+    return exit_code
 
 
 if __name__ == "__main__":
