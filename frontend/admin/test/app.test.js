@@ -75,11 +75,12 @@ test("dashboard loads authorized businesses, renders hostile strings as text and
 
 test("admin commands use the selected tenant and CSRF mutation client, render text and clear scope on switching", async () => {
   const { root, app, api, writes } = setup();
+  const output = "<script>command result</script>\n" + Array.from({ length: 40 }, () => "01234567-89ab-cdef-0123-456789abcdef".repeat(16)).join("\n");
   const original = api.request;
   api.request = async path => path.endsWith("/commands") ? [{ name: "help", description: "Available commands", argument_hint: "" }, { name: "location", argument_hint: "/location [name]" }] : original(path);
   api.mutate = async (path, method, payload) => {
     writes.push({ path, method, payload });
-    return { output: "<script>command result</script>", location_id: "loc", preview_url: "/widget/?business_id=a" };
+    return { output, location_id: "loc", preview_url: "/widget/?business_id=a" };
   };
   app.tab = "Commands"; await app.start();
   assert.deepEqual(all(root).filter(node => node.tagName === "datalist")[0].children.map(node => node.value), ["/help", "/location"]);
@@ -87,6 +88,12 @@ test("admin commands use the selected tenant and CSRF mutation client, render te
   input.parent.parent.dispatch("submit"); await app.task;
   assert.deepEqual(writes, [{ path: "/api/v1/businesses/a/commands/execute", method: "POST", payload: { input: "/location Main", location_id: null } }]);
   assert.ok(root.textContent.includes("<script>command result</script>"));
+  const consoleOutput = all(root).find(node => node.tagName === "pre");
+  assert.equal(consoleOutput.textContent, output);
+  assert.equal(consoleOutput.className, "command-output");
+  assert.equal(consoleOutput.role, "region");
+  assert.equal(consoleOutput.attributes["aria-label"], "Command output");
+  assert.equal(consoleOutput.tabIndex, 0);
   assert.equal(field(root, "Command").value, "");
   assert.equal(field(root, "Command location").value, "loc");
   const link = all(root).find(node => node.tagName === "a");

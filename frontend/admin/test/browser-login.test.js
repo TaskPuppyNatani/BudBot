@@ -14,7 +14,7 @@ const account = token => ({ csrf_token: token, user: { email: "owner@example.tes
     permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read", "provider.read", "provider.write"] },
 ] });
 
-async function fixture(t) {
+async function fixture(t, { commandOutput = () => "<script>safe command output</script>" } = {}) {
   const calls = []; const widgetNavigations = []; let token = 0;
   const faqs = []; const audit = [];
   const provider = { configured: true, provider: "openai_compatible", model: "operator-model",
@@ -76,7 +76,7 @@ async function fixture(t) {
       let text = ""; for await (const chunk of request) text += chunk;
       call.payload = JSON.parse(text);
       send(200, { canonical_name: "preview", requested_name: "preview", location_id: null,
-        output: "<script>safe command output</script>", preview_url: "/widget/?business_id=a" }); return;
+        output: commandOutput(call.payload.input), preview_url: "/widget/?business_id=a" }); return;
     }
     if (path === "/api/v1/businesses/a/provider" || path.startsWith("/api/v1/businesses/a/provider/")) {
       if (request.method === "GET") { send(200, provider); return; }
@@ -311,5 +311,60 @@ test("native admin command form sends authenticated CSRF input and provides a sa
   assert.equal(await preview.getAttribute("target"), "_blank");
   assert.equal(await preview.getAttribute("rel"), "noopener noreferrer");
   assert.equal(await page.getByLabel("Command", { exact: true }).inputValue(), "");
+  assert.deepEqual(pageErrors, []);
+});
+
+test("command output contains long audit results with working scrollbars at desktop and mobile widths", async t => {
+  const id = "01234567-89ab-cdef-0123-456789abcdef";
+  const longLine = `${id.repeat(40)} https://example.test/${"path".repeat(200)}`;
+  const audit = Array.from({ length: 20 }, (_, index) =>
+    `2026-01-01T00:00:00Z | admin.assistant.updated | {"changed_fields":"greeting","location_id":"${id}"}${index === 0 ? longLine : ""}`
+  ).join("\n");
+  const short = "Assistant enabled: true";
+  const { page, pageErrors } = await fixture(t, { commandOutput: input => input === "/audit 20" ? audit : short });
+  await signIn(page);
+  await page.getByRole("button", { name: "Commands", exact: true }).click();
+  for (const viewport of [{ width: 1280, height: 800 }, { width: 360, height: 740 }, { width: 320, height: 640 }]) {
+    await page.setViewportSize(viewport);
+    await page.getByLabel("Command", { exact: true }).fill("/audit 20");
+    await page.getByRole("button", { name: "Run command", exact: true }).click();
+    await page.waitForFunction(expected => document.querySelector("pre")?.textContent === expected, audit);
+    const output = page.locator("pre");
+    const metrics = await output.evaluate(node => {
+      const style = getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      const panel = node.closest("section").getBoundingClientRect();
+      return { pageWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth,
+        clientWidth: node.clientWidth, scrollWidth: node.scrollWidth, clientHeight: node.clientHeight, scrollHeight: node.scrollHeight,
+        maxHeight: style.maxHeight, overflowX: style.overflowX, overflowY: style.overflowY, whiteSpace: style.whiteSpace,
+        left: rect.left, right: rect.right, panelLeft: panel.left, panelRight: panel.right };
+    });
+    assert.ok(metrics.pageWidth <= metrics.viewportWidth + 1, JSON.stringify({ viewport, metrics }));
+    assert.ok(metrics.left >= metrics.panelLeft && metrics.right <= metrics.panelRight + 1);
+    assert.equal(metrics.whiteSpace, "pre");
+    assert.equal(metrics.overflowX, "auto"); assert.equal(metrics.overflowY, "auto");
+    assert.ok(Number.isFinite(parseFloat(metrics.maxHeight)) && parseFloat(metrics.maxHeight) <= 480);
+    assert.ok(metrics.clientHeight <= parseFloat(metrics.maxHeight) + 1);
+    assert.ok(metrics.scrollWidth > metrics.clientWidth && metrics.scrollHeight > metrics.clientHeight);
+    assert.equal(await output.textContent(), audit); // Complete output, including all 20 events.
+    const scroll = await output.evaluate(node => {
+      node.scrollLeft = node.scrollWidth; node.scrollTop = node.scrollHeight;
+      return { x: node.scrollLeft, y: node.scrollTop, pageX: window.scrollX };
+    });
+    assert.ok(scroll.x > 0 && scroll.y > 0); assert.equal(scroll.pageX, 0);
+    await page.getByRole("button", { name: "Run command", exact: true }).scrollIntoViewIfNeeded();
+    assert.equal(await page.getByRole("button", { name: "Run command", exact: true }).isEnabled(), true);
+    assert.equal(await page.getByLabel("Command", { exact: true }).isEnabled(), true);
+    assert.ok((await page.getByRole("button", { name: "Run command", exact: true }).boundingBox()).y < (await output.boundingBox()).y);
+    await page.getByLabel("Command", { exact: true }).fill("/status");
+    await page.getByRole("button", { name: "Run command", exact: true }).click();
+    await page.waitForFunction(expected => document.querySelector("pre")?.textContent === expected, short);
+    const shortSize = await output.evaluate(node => ({ height: node.clientHeight, scrollHeight: node.scrollHeight, width: node.clientWidth, scrollWidth: node.scrollWidth }));
+    assert.ok(shortSize.height < 128 && shortSize.scrollHeight <= shortSize.height + 1);
+    assert.ok(shortSize.scrollWidth <= shortSize.width + 1);
+  }
+  await page.getByRole("button", { name: "Business", exact: true }).click();
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Save changes", exact: true }).isEnabled(), true);
   assert.deepEqual(pageErrors, []);
 });

@@ -303,7 +303,9 @@ export class AdminApp {
         this.commandInput = ""; this.render();
       }, "Command completed. Reload settings to refresh other dashboard sections after changes.");
     });
-    section.append(form, this.node("pre", this.commandOutput || "Run /help to see available commands and syntax."));
+    section.append(form, this.node("pre", this.commandOutput || "Run /help to see available commands and syntax.", {
+      className: "command-output", role: "region", "aria-label": "Command output", tabIndex: 0,
+    }));
     if (this.commandPreview) section.append(this.node("a", "Open customer preview", { href: this.commandPreview, target: "_blank", rel: "noopener noreferrer" }));
     return section;
   }
