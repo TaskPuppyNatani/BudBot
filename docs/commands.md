@@ -1,7 +1,7 @@
 # BudBot Slash Command Contract
 
 Status: V1 project contract  
-Last updated: 2026-09-19
+Last updated: 2026-10-23
 
 ## Rule
 
@@ -300,6 +300,79 @@ Show recent administrative configuration changes that the authenticated user is 
 
 Sensitive secrets must never be included in audit output.
 
+## M9B Pass 5 authenticated execution
+
+Initial trace: admin `/help` was partial (the existing M4 handler/registry had no
+authenticated HTTP transport); the other sixteen admin commands were missing
+(empty stub modules, no registrations). Customer handlers were already complete
+and remain separate. Pass 5 reuses the M4 parser, permission evaluator, metadata
+and help handler and registers only the missing admin handlers.
+
+The dashboard's **Commands** section is a convenience interface. The dashboard
+remains the primary settings editor. `GET /api/v1/businesses/{business_id}/commands`
+returns currently permitted admin metadata/autocomplete. Cookie-authenticated
+`POST .../commands/execute` accepts only:
+
+```json
+{"input":"/help","location_id":null}
+```
+
+Every execution POST (including read commands) requires `X-CSRF-Token`. Active
+account/session, current membership, active business and central role permissions
+are resolved on every request. Caller-supplied permissions, actor, tenant, scope,
+provider URL or credential are not accepted. The old business-ID header grants no
+administrative access. Customer execution remains at `/api/v1/commands/execute`,
+with customer session/compliance checks and no access to admin handlers.
+
+The response includes command text output, authorized help metadata when applicable,
+`location_id` and an optional same-origin `preview_url`. Working location is local
+to the dashboard panel/request, never a customer or admin authentication session.
+Pass the returned location ID on the next request. Every supplied location is
+tenant-checked again. `/location --business` clears it; reload, business switching
+and logout clear panel state. Administrators can inspect/edit inactive locations,
+as in the dashboard; public preview retains normal active-location/compliance checks.
+
+| Command | Arguments and effect | Required permission |
+| --- | --- | --- |
+| `/help` | Existing permission-filtered help, with syntax/autocomplete | Authenticated member with `business.read` |
+| `/status` | Business/assistant enabled state and working location; provider configuration status only when permitted, without live probes | `business.read`, `assistant.read` |
+| `/locations` | Location names, UUIDs and active flags (up to 50; dashboard lists the remainder) | `location.read` |
+| `/location [name or UUID]` | Show/select exact normalized name or UUID; ambiguous names require UUID; `--business` selects defaults | `location.read` |
+| `/hours` | Configured weekly hours; no inferred live/holiday status | `location.read` |
+| `/set-hours {"hours":[...]}` | Replace all weekly hours for the working location with existing `LocationUpdate` validation; `[]` clears unconfigured hours | `location.write` |
+| `/bot-name [name]` | Show effective name; nonempty text writes the business default or selected location override without changing IDs | `assistant.read`; writes additionally `assistant.write` |
+| `/greeting [text]` | Show/update greeting in the same scope | `assistant.read`; writes additionally `assistant.write` |
+| `/faq [query]` | List/search administrative FAQs including drafts/disabled entries; selected location includes business fallback; no selection lists all tenant scopes; up to 25 results; edit/disable in dashboard | `faq.read` |
+| `/add-faq {"question":"...","answer":"...","location_id":null}` | Create using `FAQCreate` and KnowledgeService; explicit `location_id` is required (`null` means business-wide); optional `enabled`/`is_public` | `faq.write` |
+| `/disable [--confirm]` | Set assistant enabled=false in current scope. Business default requires the explicit `--confirm` confirmation. Existing location overrides still apply | `assistant.write` |
+| `/enable` | Set assistant enabled=true in current scope | `assistant.write` |
+| `/provider` | Safe provider/model/runtime/credential-configured metadata; make configuration or credential changes in AI Provider dashboard | `provider.read` (owner) |
+| `/test` | Sealed Pass 4 saved-profile diagnostic, including exact compatible model discovery; no business/customer state mutation; safe test audit event | `provider.write` (owner) |
+| `/preview` | `/widget/?business_id=<current-business>`; creates a separate customer session without passing owner tokens | `business.read` |
+| `/compliance` | Business or selected-location resolution and age notice; informational only, no rule updates/URL imports | `compliance.read` |
+| `/audit [1-50]` | Latest sanitized AuditHistoryService events (default 10), no raw stored details | `audit.read` (owner) |
+
+Example structured hours:
+
+```text
+/set-hours {"hours":[{"day_of_week":0,"open_time":"09:00","close_time":"17:00"},{"day_of_week":1,"is_closed":true}]}
+```
+
+Days use Monday=0 through Sunday=6. Supplied hours replace the entire weekly list;
+omitted days are unconfigured. Invalid, duplicate, reversed or null rows fail before
+writing. FAQ creation requires an explicit scope and uses the existing duplicate
+and tenant-location validation. Renaming/greeting and enable/disable target the
+business default when no working location is selected, otherwise an explicit
+location assistant override. Clearing overrides remains a dashboard operation.
+
+Commands reuse shared audited actions with the equivalent API routes for assistant,
+hours, FAQ and provider-test writes. They produce the same event types and safe
+field metadata once, with no command input, FAQ content, provider credentials,
+ciphertext or raw provider responses in audit details. Provider and credential
+configuration never have command-line setters. Errors show fixed safe parser,
+validation/permission messages; unexpected failures roll back and return a generic
+retry/reload message. Commands are not persisted or logged as conversational history.
+
 ## Safe custom commands
 
 The architecture should allow safe business-defined commands such as:
@@ -351,10 +424,10 @@ commands fail closed.
 
 Customer command execution and autocomplete use the existing tenant and customer
 session boundaries. The bounded M4 HTTP API remains customer-only. M9A adds
-authentication and permission checks to business-management APIs, but does not yet
-expose admin command execution. Admin command contexts and permission evaluation
-remain explicit inputs for the M9B integration; the development tenant header is
-not authentication.
+authentication and permission checks to business-management APIs. M9B Pass 5
+constructs the explicit administrative command context from those same verified
+membership/role dependencies at its separate business-scoped endpoint; the
+development tenant header is not authentication.
 
 Customer feature requirements resolve from persisted business flags after live
 tenant/session validation; compliance requirements delegate to the M3
@@ -386,21 +459,21 @@ validation, but are not persisted or executed.
 ### Admin
 
 - [x] `/help`
-- [ ] `/status`
-- [ ] `/locations`
-- [ ] `/location`
-- [ ] `/hours`
-- [ ] `/set-hours`
-- [ ] `/bot-name`
-- [ ] `/greeting`
-- [ ] `/faq`
-- [ ] `/add-faq`
-- [ ] `/disable`
-- [ ] `/enable`
-- [ ] `/provider`
-- [ ] `/test`
-- [ ] `/preview`
-- [ ] `/compliance`
-- [ ] `/audit`
+- [x] `/status`
+- [x] `/locations`
+- [x] `/location`
+- [x] `/hours`
+- [x] `/set-hours`
+- [x] `/bot-name`
+- [x] `/greeting`
+- [x] `/faq`
+- [x] `/add-faq`
+- [x] `/disable`
+- [x] `/enable`
+- [x] `/provider`
+- [x] `/test`
+- [x] `/preview`
+- [x] `/compliance`
+- [x] `/audit`
 
 No V1 release while a promised command remains unchecked unless the V1 contract is deliberately amended.

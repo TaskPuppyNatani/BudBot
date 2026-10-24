@@ -139,6 +139,8 @@ export class AdminApp {
     await this.loadManagementPanel();
   }
   resetManagementData() {
+    this.adminCommands = []; this.commandLocationId = null;
+    this.commandInput = ""; this.commandOutput = ""; this.commandPreview = null;
     this.providerProfile = null;
     this.providerTest = null; this.providerTesting = false; this.providerConnectionPanel = null;
     this.faqs = []; this.editFaqId = null; this.auditPage = null;
@@ -146,13 +148,14 @@ export class AdminApp {
   }
   async loadManagementPanel(offset = 0) {
     const id = this.businessId;
-    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : this.tab === "AI Provider" ? "provider.read" : null;
+    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : this.tab === "AI Provider" ? "provider.read" : this.tab === "Commands" ? "business.read" : null;
     this.panelError = ""; this.panelLoaded = false;
     if (!permission || !this.api.can(id, permission)) return;
     try {
-      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : `/audit?limit=25&offset=${offset}`));
+      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : this.tab === "Commands" ? "/commands" : `/audit?limit=25&offset=${offset}`));
       if (id !== this.businessId) return;
       if (this.tab === "FAQs") this.faqs = result;
+      else if (this.tab === "Commands") this.adminCommands = result;
       else if (this.tab === "AI Provider") {
         if (JSON.stringify(this.providerProfile) !== JSON.stringify(result)) this.providerTest = null;
         this.providerProfile = result;
@@ -236,13 +239,13 @@ export class AdminApp {
       this.root.replaceChildren(fragment); this.updateControls(); return;
     }
     const nav = this.node("nav", "", { "aria-label": "Management sections" });
-    const sections = ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History", "AI Provider"];
+    const sections = ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History", "AI Provider", "Commands"];
     if (this.runtime?.available && this.api.can(this.businessId, "runtime.shutdown")) sections.push("System");
     for (const title of sections) {
       const button = this.button(title, () => {
         if (!this.discard()) return;
         this.dirty = false; this.tab = title;
-        if (["FAQs", "Audit History", "AI Provider"].includes(title)) return this.run(async () => {
+        if (["FAQs", "Audit History", "AI Provider", "Commands"].includes(title)) return this.run(async () => {
           this.resetManagementData(); this.render();
           await this.loadManagementPanel(); this.render();
         });
@@ -266,11 +269,43 @@ export class AdminApp {
       });
       fragment.append(selection);
     }
-    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView", System: "runtimeView" };
+    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView", Commands: "commandsView", System: "runtimeView" };
     const panel = this[builders[this.tab]]();
-    this.managementPanel = ["FAQs", "Audit History", "AI Provider"].includes(this.tab) ? panel : null;
+    this.managementPanel = ["FAQs", "Audit History", "AI Provider", "Commands"].includes(this.tab) ? panel : null;
     fragment.append(panel);
     this.root.replaceChildren(fragment); this.updateControls(); this.notice();
+  }
+  commandsView() {
+    const section = this.managementSection("Admin commands", "business.read");
+    if (!this.panelLoaded || !this.api.can(this.businessId, "business.read")) return section;
+    section.append(this.node("p", "Commands use your current business permissions. Start with /help. The dashboard remains the editor for complex settings. Working location is local to this panel; /location --business returns to business defaults."));
+    const selection = this.field(section, "Command location", this.commandLocationId, { trackChanges: false,
+      options: [["", "Business defaults"], ...this.locations.map(item => [item.id, `${item.display_name}${item.active ? "" : " (inactive)"}`])] });
+    selection.addEventListener("change", () => { this.commandLocationId = selection.value || null; this.commandOutput = ""; this.commandPreview = null; this.render(); });
+    const form = this.node("form", "", { className: "card" });
+    const input = this.field(form, "Command", this.commandInput, { trackChanges: false, required: true, maxLength: 16384 });
+    input.autocomplete = "off";
+    input.setAttribute("list", "admin-command-options");
+    input.addEventListener("input", () => { this.commandInput = input.value; });
+    const options = this.node("datalist", "", { id: "admin-command-options" });
+    for (const command of this.adminCommands) options.append(this.node("option", command.argument_hint || command.description, { value: `/${command.name}` }));
+    form.append(options, this.control(this.node("button", "Run command", { type: "submit" })));
+    form.addEventListener("submit", event => {
+      event.preventDefault();
+      if (this.busy) return;
+      const id = this.businessId;
+      this.task = this.run(async () => {
+        const response = await this.api.mutate(this.path("/commands/execute"), "POST", { input: input.value, location_id: this.commandLocationId });
+        if (id !== this.businessId) return;
+        this.commandLocationId = response.location_id;
+        this.commandOutput = response.output;
+        this.commandPreview = response.preview_url === previewUrl(id) ? response.preview_url : null;
+        this.commandInput = ""; this.render();
+      }, "Command completed. Reload settings to refresh other dashboard sections after changes.");
+    });
+    section.append(form, this.node("pre", this.commandOutput || "Run /help to see available commands and syntax."));
+    if (this.commandPreview) section.append(this.node("a", "Open customer preview", { href: this.commandPreview, target: "_blank", rel: "noopener noreferrer" }));
+    return section;
   }
   runtimeView() {
     const section = this.node("section", "", { className: "card" });

@@ -14,7 +14,7 @@ from budbot.schemas.assistant import (
     LocationAssistantOverrideRead,
     LocationAssistantOverrideUpdate,
 )
-from budbot.services.audit_service import record_audit_event
+from budbot.services.admin_actions import AdminActions
 from budbot.services.assistant_service import AssistantService
 
 router = APIRouter(prefix="/api/v1/businesses/{business_id}", tags=["assistant"])
@@ -42,19 +42,7 @@ async def update_assistant(
     session: Session,
     access: WriteAccess,
 ) -> object:
-    assistant = await AssistantService(session, access.tenant).update(
-        business_id, payload
-    )
-    await record_audit_event(
-        session,
-        "admin.assistant.updated",
-        actor_user_id=access.user_id,
-        business_id=business_id,
-        resource_type="assistant",
-        resource_id=assistant.id,
-        details={"changed_fields": ",".join(sorted(payload.model_fields_set))},
-    )
-    return assistant
+    return await AdminActions(session, access.tenant, access.user_id).update_assistant(payload)
 
 
 @router.get(
@@ -80,19 +68,7 @@ async def update_location_assistant_override(
     access: WriteAccess,
 ) -> object:
     access.tenant.require_business(business_id)
-    override = await AssistantService(session, access.tenant).update_override(
-        location_id, payload
-    )
-    await record_audit_event(
-        session,
-        "admin.assistant.location_override.updated",
-        actor_user_id=access.user_id,
-        business_id=business_id,
-        resource_type="location_assistant_override",
-        resource_id=override.id,
-        details={"changed_fields": ",".join(sorted(payload.model_fields_set))},
-    )
-    return override
+    return await AdminActions(session, access.tenant, access.user_id).update_assistant_override(location_id, payload)
 
 
 @router.get(

@@ -66,6 +66,18 @@ async function fixture(t) {
       send(401, { detail: "Authentication is required." }); return;
     }
     if (path === "/api/v1/auth/me") { send(200, account(String(++token))); return; }
+    if (path === "/api/v1/businesses/a/commands") {
+      send(200, [{ name: "help", description: "Help", argument_hint: "" }, { name: "preview", description: "Customer preview", argument_hint: "" }]); return;
+    }
+    if (path === "/api/v1/businesses/a/commands/execute") {
+      if (request.headers["x-csrf-token"] !== String(token)) {
+        send(403, { detail: "A valid CSRF token is required for this request." }); return;
+      }
+      let text = ""; for await (const chunk of request) text += chunk;
+      call.payload = JSON.parse(text);
+      send(200, { canonical_name: "preview", requested_name: "preview", location_id: null,
+        output: "<script>safe command output</script>", preview_url: "/widget/?business_id=a" }); return;
+    }
     if (path === "/api/v1/businesses/a/provider" || path.startsWith("/api/v1/businesses/a/provider/")) {
       if (request.method === "GET") { send(200, provider); return; }
       if (request.headers["x-csrf-token"] !== String(token)) {
@@ -282,5 +294,22 @@ test("native provider controls hide irrelevant endpoints and test saved settings
   await page.getByRole("button", { name: "Remove credential and disable AI", exact: true }).click();
   await page.getByText(/^AI runtime: Disabled\./).waitFor();
   assert.equal(calls.filter(call => call.method === "DELETE").length, 1);
+  assert.deepEqual(pageErrors, []);
+});
+
+test("native admin command form sends authenticated CSRF input and provides a safe separate preview", async t => {
+  const { page, calls, pageErrors } = await fixture(t);
+  await signIn(page);
+  await page.getByRole("button", { name: "Commands", exact: true }).click();
+  await page.getByLabel("Command", { exact: true }).fill("/preview");
+  await page.getByRole("button", { name: "Run command", exact: true }).click();
+  await page.getByText("<script>safe command output</script>", { exact: true }).waitFor();
+  const call = calls.find(call => call.path.endsWith("/commands/execute"));
+  assert.equal(call.status, 200); assert.deepEqual(call.payload, { input: "/preview", location_id: null });
+  const preview = page.getByRole("link", { name: "Open customer preview", exact: true });
+  assert.equal(await preview.getAttribute("href"), "/widget/?business_id=a");
+  assert.equal(await preview.getAttribute("target"), "_blank");
+  assert.equal(await preview.getAttribute("rel"), "noopener noreferrer");
+  assert.equal(await page.getByLabel("Command", { exact: true }).inputValue(), "");
   assert.deepEqual(pageErrors, []);
 });

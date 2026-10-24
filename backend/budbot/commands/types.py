@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from uuid import UUID
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +14,11 @@ from budbot.compliance.registry import ComplianceCapability
 from budbot.core.exceptions import CommandError
 from budbot.core.tenancy import TenantContext
 from budbot.models.session import CustomerSession
+
+if TYPE_CHECKING:
+    from budbot.core.config import Settings
+    from budbot.providers.ai.registry import AIProviderRegistry
+    from budbot.providers.ai.harness_registry import AIHarnessRegistry
 
 
 class CommandScope(StrEnum):
@@ -55,10 +61,21 @@ class ParsedCommand:
 
 @dataclass(frozen=True, slots=True)
 class PermissionContext:
-    """Replaceable input from future authenticated admin resolution."""
+    """Trusted permissions supplied by the authenticated administrative transport."""
 
     authenticated_admin: bool = False
     permissions: frozenset[str] = field(default_factory=frozenset)
+
+
+@dataclass(frozen=True, slots=True)
+class AdminCommandRuntime:
+    """Server-resolved administrative identity/resources; never accepted as input."""
+
+    user_id: UUID
+    location_id: UUID | None
+    settings: Settings
+    providers: AIProviderRegistry
+    harnesses: AIHarnessRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +87,7 @@ class CommandExecutionContext:
     customer_session: CustomerSession | None = None
     permission_context: PermissionContext = field(default_factory=PermissionContext)
     features: frozenset[str] | None = None
+    admin_runtime: AdminCommandRuntime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +106,8 @@ class CommandResult:
     requested_name: str
     output: str
     commands: tuple[CommandMetadata, ...] = ()
+    selected_location_id: UUID | None = None
+    preview_url: str | None = None
 
 
 CommandHandler = Callable[

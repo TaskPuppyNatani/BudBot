@@ -17,10 +17,13 @@ async def hours(
 ):
     location = await get_selected_location(context)
     assert location is not None
+    return command_result(parsed, format_hours(location))
+
+
+def format_hours(location) -> str:
+    """Render the same configured weekly facts for either authorized scope."""
     if not location.hours:
-        return command_result(
-            parsed, f"Weekly hours are not configured for {location.display_name}."
-        )
+        return f"Weekly hours are not configured for {location.display_name}."
 
     by_day = {entry.day_of_week: entry for entry in location.hours}
     lines = [f"Weekly hours for {location.display_name}:"]
@@ -35,4 +38,4 @@ async def hours(
         else:
             details = f"{_format_time(entry.open_time)}–{_format_time(entry.close_time)}"
         lines.append(f"{weekday}: {details}")
-    return command_result(parsed, "\n".join(lines))
+    return "\n".join(lines)

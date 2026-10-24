@@ -9,7 +9,7 @@ from fastapi import HTTPException
 import pytest
 from sqlalchemy import select
 
-from budbot.api.routes import knowledge
+from budbot.services import admin_actions
 from budbot.core.security import token_digest
 from budbot.core.time import utc_now
 from budbot.models.auth import AdminSession, AuditEvent
@@ -239,7 +239,7 @@ async def test_failed_publication_rolls_back_faq_and_success_event(faq_admin, mo
     entry = (await create(f)).json() if operation == "update" else None
     before = (await f.client.get(f.base + "/faqs")).json()
     history = (await f.client.get(f.base + "/audit")).json()
-    original = knowledge.record_audit_event
+    original = admin_actions.record_audit_event
 
     async def fail_after_audit(*args, **kwargs):
         await original(*args, **kwargs)
@@ -253,9 +253,9 @@ async def test_failed_publication_rolls_back_faq_and_success_event(faq_admin, mo
 
     with monkeypatch.context() as patch:
         if failure == "audit":
-            patch.setattr(knowledge, "record_audit_event", fail_after_audit)
+            patch.setattr(admin_actions, "record_audit_event", fail_after_audit)
         elif failure == "response":
-            patch.setattr(knowledge.FAQRead, "model_validate", fail_response)
+            patch.setattr(admin_actions.FAQRead, "model_validate", fail_response)
         else:
             patch.setattr(f.db, "commit", fail_commit)
         result = await create(f) if entry is None else await f.client.patch(f.base + f"/faqs/{entry['id']}", json={"answer": "Must roll back"})

@@ -160,3 +160,43 @@ inputs clear on submission, including failures. Configure the deployment root ke
 and exact compatible-endpoint allowlist as documented in docs/configuration.md.
 The model/tool-calling declaration must match the chosen provider. No Test
 Connection, diagnostics, discovery or credential rehydration is implemented.
+
+## Pass 5: authenticated commands
+
+Open **Commands** after selecting a business. `/help` and the command input's
+suggestions use current server-filtered permissions. The optional **Command
+location** dropdown (or `/location <name or UUID>`) selects the local working
+scope. `/location --business` restores business defaults. Commands do not use or
+change customer sessions. The panel is ephemeral and clears on reload, business
+switch or logout; no command history or credentials are stored in the browser.
+
+The dashboard remains the primary editor. Commands reuse its services/validation,
+audited mutations, authenticated cookie and fresh CSRF flow. Read commands also
+use the CSRF-protected execution endpoint. Provider credentials cannot be supplied
+through commands. `/provider` exposes safe metadata, `/test` reuses Pass 4 saved
+provider diagnostics, and `/audit` renders the existing sanitized history only.
+See `docs/commands.md` for exact syntax, permissions, JSON schemas and limits.
+
+### Pass 5 manual acceptance
+
+1. Sign in and open **Commands**. Run `/help`, `/status`, `/locations`, then
+   `/location <an existing location name>` and `/hours`.
+2. Run `/greeting <a temporary greeting>`, then `/greeting`. Reload settings and
+   confirm the selected-location override in **Assistant**; restore its original
+   value or clear the explicit override in that editor.
+3. Run `/location --business`, then `/disable`. Confirm it refuses without
+   confirmation and leaves state unchanged. Run `/disable --confirm`, followed
+   immediately by `/enable` to restore the business default. Explicit location
+   overrides keep their normal precedence.
+4. Run `/provider`, `/test`, `/compliance`, `/audit 20` and `/preview`. Follow
+   **Open customer preview** and complete normal location/age checks. Confirm
+   normal customer chat remains functional and audit output contains safe event
+   metadata without credentials or greeting/FAQ content.
+5. If existing non-owner accounts/multiple memberships are available, confirm
+   `/help` omits privileged commands, denied writes remain denied, and business
+   switching clears command output and working location.
+
+Structured `/set-hours` replaces all weekly hours. Prefer a disposable test
+location/FAQ for manual writes; the automated tests cover valid/invalid hours,
+FAQ creation and rollback without touching the operator's data. Account and
+membership management and onboarding cleanup remain a later slice.

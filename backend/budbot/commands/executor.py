@@ -96,6 +96,8 @@ class CommandExecutor:
                 else ""
             )
             lines.append(f"/{command.name} — {command.description}{alias_text}")
+            if context.scope is CommandScope.ADMIN and command.argument_hint:
+                lines.append(f"  {command.argument_hint}")
         return CommandResult(
             canonical_name=parsed.canonical_name,
             requested_name=parsed.requested_name,

@@ -73,6 +73,45 @@ test("dashboard loads authorized businesses, renders hostile strings as text and
   assert.equal(button(root, "Save changes").disabled, false);
 });
 
+test("admin commands use the selected tenant and CSRF mutation client, render text and clear scope on switching", async () => {
+  const { root, app, api, writes } = setup();
+  const original = api.request;
+  api.request = async path => path.endsWith("/commands") ? [{ name: "help", description: "Available commands", argument_hint: "" }, { name: "location", argument_hint: "/location [name]" }] : original(path);
+  api.mutate = async (path, method, payload) => {
+    writes.push({ path, method, payload });
+    return { output: "<script>command result</script>", location_id: "loc", preview_url: "/widget/?business_id=a" };
+  };
+  app.tab = "Commands"; await app.start();
+  assert.deepEqual(all(root).filter(node => node.tagName === "datalist")[0].children.map(node => node.value), ["/help", "/location"]);
+  const input = field(root, "Command"); input.value = "/location Main"; input.dispatch("input");
+  input.parent.parent.dispatch("submit"); await app.task;
+  assert.deepEqual(writes, [{ path: "/api/v1/businesses/a/commands/execute", method: "POST", payload: { input: "/location Main", location_id: null } }]);
+  assert.ok(root.textContent.includes("<script>command result</script>"));
+  assert.equal(field(root, "Command").value, "");
+  assert.equal(field(root, "Command location").value, "loc");
+  const link = all(root).find(node => node.tagName === "a");
+  assert.equal(link.href, "/widget/?business_id=a"); assert.equal(link.rel, "noopener noreferrer");
+  assert.equal(app.busy, false);
+  const business = field(root, "Business"); business.value = "b"; business.dispatch("change"); await app.task;
+  assert.equal(app.commandLocationId, null); assert.equal(app.commandOutput, ""); assert.equal(app.commandPreview, null);
+  assert.ok(!root.textContent.includes("<script>command result</script>"));
+});
+
+test("admin command errors retain input and release controls; untrusted preview URLs are ignored", async () => {
+  const { root, app, api } = setup(["business.read"]);
+  const original = api.request;
+  api.request = async path => path.endsWith("/commands") ? [{ name: "help", description: "Help" }] : original(path);
+  api.mutate = async () => { throw new ApiError(403, "You do not have permission."); };
+  app.tab = "Commands"; await app.start();
+  let input = field(root, "Command"); input.value = "/disable --confirm"; input.dispatch("input");
+  input.parent.parent.dispatch("submit"); await app.task;
+  assert.equal(app.busy, false); assert.equal(button(root, "Run command").disabled, false);
+  assert.equal(input.value, "/disable --confirm"); assert.match(app.message, /permission/);
+  api.mutate = async () => ({ output: "Preview", location_id: null, preview_url: "https://evil.example/" });
+  input.value = "/preview"; input.dispatch("input"); input.parent.parent.dispatch("submit"); await app.task;
+  assert.equal(app.commandPreview, null); assert.ok(!all(root).some(node => node.tagName === "a"));
+});
+
 test("permission controls use server permissions for each area", async () => {
   for (const permissions of [["business.read"], ["business.read", "location.write"], ["business.read", "business.write", "location.write", "assistant.write", "branding.write"]]) {
     const { root, app, writes } = setup(permissions); await app.start();

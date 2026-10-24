@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from budbot.commands.types import CommandScope
 from budbot.schemas.common import DomainSchema
@@ -27,3 +27,15 @@ class CommandExecuteRead(DomainSchema):
     requested_name: str
     output: str
     commands: list[CommandMetadataRead] = Field(default_factory=list)
+
+
+class AdminCommandExecuteRequest(DomainSchema):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    input: str = Field(min_length=1, max_length=16384)
+    location_id: UUID | None = None
+
+
+class AdminCommandExecuteRead(CommandExecuteRead):
+    location_id: UUID | None = None
+    preview_url: str | None = None

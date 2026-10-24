@@ -10,6 +10,7 @@ from budbot.api.dependencies import AdminAccess, get_session, require_business_p
 from budbot.schemas.location import LocationCreate, LocationRead, LocationUpdate
 from budbot.services.audit_service import record_audit_event
 from budbot.services.location_service import LocationService
+from budbot.services.admin_actions import AdminActions
 
 router = APIRouter(
     prefix="/api/v1/businesses/{business_id}/locations", tags=["locations"]
@@ -78,19 +79,7 @@ async def update_location(
     access: WriteAccess,
 ) -> object:
     access.tenant.require_business(business_id)
-    location = await LocationService(session, access.tenant).update(
-        location_id, payload
-    )
-    await record_audit_event(
-        session,
-        "admin.location.updated",
-        actor_user_id=access.user_id,
-        business_id=business_id,
-        resource_type="location",
-        resource_id=location_id,
-        details={"changed_fields": ",".join(sorted(payload.model_fields_set))},
-    )
-    return location
+    return await AdminActions(session, access.tenant, access.user_id).update_location(location_id, payload)
 
 
 @router.post("/{location_id}/deactivate", response_model=LocationRead)

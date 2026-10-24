@@ -539,6 +539,17 @@ Provider contract tests should cover:
 - malformed upstream response;
 - secret redaction.
 
+## M9B Pass 5 administrative commands
+
+The existing M4 executor now registers the remaining authenticated admin commands.
+The separate business-scoped transport resolves current membership/role permissions
+and requires CSRF for execution; public customer endpoints remain customer-only.
+The dashboard Commands panel is a convenience surface with ephemeral working
+location/output state. Shared AdminActions keeps assistant, hours, FAQ and provider
+test validation/audit publication identical to their dashboard API actions.
+There is no migration or new credential/configuration mechanism. See
+`docs/commands.md` and `frontend/admin/README.md` for syntax and acceptance steps.
+
 ## External-service testing
 
 Core test suites must not require:
