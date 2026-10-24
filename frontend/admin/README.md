@@ -175,10 +175,12 @@ audited mutations, authenticated cookie and fresh CSRF flow. Read commands also
 use the CSRF-protected execution endpoint. Provider credentials cannot be supplied
 through commands. `/provider` exposes safe metadata, `/test` reuses Pass 4 saved
 provider diagnostics, and `/audit` renders the existing sanitized history only.
-Use simple commands such as `/set-hours monday 9am 10pm`,
-`/set-hours monday closed`, and
+Use `/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed` for a weekly schedule,
+or `/set-hours monday 9am 10pm` for a quick edit, and
 `/add-faq Do you have parking? | Street parking only.` Hours changes affect only
-the named day. FAQs use the selected location, or become business-wide when
+the named days. Groups such as weekdays, weekends, everyday/daily and day ranges
+are supported. Overlapping days or invalid groups reject the whole command.
+FAQs use the selected location, or become business-wide when
 Business defaults is selected. No JSON or IDs are needed. Provider results and
 audit entries use plain-English labels; the full output stays in the scrollable
 console. See `docs/commands.md` for syntax, permissions and limits.

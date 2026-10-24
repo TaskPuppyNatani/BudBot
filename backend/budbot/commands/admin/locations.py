@@ -1,4 +1,4 @@
-"""Location names and friendly one-day edits through strict weekly-hours models."""
+"""Location names and friendly schedule edits through strict weekly-hours models."""
 
 from collections import Counter
 
@@ -53,13 +53,14 @@ async def hours(context, parsed):
 
 
 async def set_hours(context, parsed):
-    row = parse_hours(parsed.raw_arguments)
+    rows = parse_hours(parsed.raw_arguments)
+    changed_days = {row.day_of_week for row in rows}
     # The existing row lock/populate_existing read keeps other days current
     # before merging. The audited action still uses LocationService.update.
     item = await selected_location(context, required=True, for_update=True)
     try:
-        hours = [LocationHoursInput.model_validate(entry) for entry in item.hours if entry.day_of_week != row.day_of_week]
-        payload = LocationUpdate(hours=sorted([*hours, row], key=lambda entry: entry.day_of_week))
+        hours = [LocationHoursInput.model_validate(entry) for entry in item.hours if entry.day_of_week not in changed_days]
+        payload = LocationUpdate(hours=sorted([*hours, *rows], key=lambda entry: entry.day_of_week))
     except ValidationError:
         raise CommandError("COMMAND_ARGUMENT_ERROR", "Some saved hours need attention. Open Locations to review the weekly schedule before trying again.", status_code=422) from None
     item = await actions(context).update_location(item.id, payload)

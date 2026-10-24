@@ -74,7 +74,7 @@ async def test_all_seventeen_commands_use_existing_scoped_services(admin):
     assert {item["name"] for item in metadata.json()} == NAMES
     help_result = await execute(f, "/HELP")
     assert {item["name"] for item in help_result["commands"]} == NAMES
-    assert '/set-hours monday 9am 10pm' in help_result["output"]
+    assert '/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed' in help_result["output"]
     assert '/add-faq Do you have parking? | Street parking only.' in help_result["output"]
     assert not any(value in help_result["output"] for value in ('JSON', 'day_of_week', 'location_id', 'UUID'))
     assert "Test Assistant" in (await execute(f, "/status"))["output"]
@@ -143,11 +143,61 @@ async def test_repeated_friendly_hours_edits_preserve_other_days_and_use_same_au
     assert len(rows) == 2 and rows[0]["is_closed"] and rows[0]["open_time"] is None
     before = (await f.client.get(f.base + "/audit")).json()
     failure = await command(f, "/set-hours monday 10pm 9am", f.location)
-    assert failure.status_code == 422 and "/set-hours monday 9am 10pm" in failure.json()["detail"]
+    assert failure.status_code == 422 and "/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed" in failure.json()["detail"]
     assert (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"] == rows
     assert (await f.client.get(f.base + "/audit")).json() == before
     events = list((await f.db.scalars(select(AuditEvent).where(AuditEvent.event_type == "admin.location.updated"))).all())
     assert len(events) == 4 and all(event.details == {"changed_fields": "hours"} for event in events)
+
+
+async def test_bulk_hours_preserve_unnamed_days_repeat_and_audit_once_per_edit(admin):
+    f = admin
+    def schedule(rows):
+        return [(row["day_of_week"], row["open_time"], row["close_time"], row["is_closed"]) for row in rows]
+    await execute(f, "/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed", f.location)
+    rows = (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"]
+    assert len(rows) == 7
+    assert all((row["open_time"], row["close_time"]) == ("09:00:00", "21:00:00") for row in rows[:5])
+    weekend = schedule(rows[5:])
+    assert weekend == [(5, "10:00:00", "20:00:00", False), (6, None, None, True)]
+    for value in ("weekdays 8am-6pm", "monday-friday 9:00am-9 pm"):
+        await execute(f, "/set-hours " + value, f.location)
+        rows = (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"]
+        assert len(rows) == 7 and schedule(rows[5:]) == weekend
+    assert all(row["open_time"] == "09:00:00" and row["close_time"] == "21:00:00" for row in rows[:5])
+    weekdays = schedule(rows[:5])
+    output = (await execute(f, "/set-hours weekends closed", f.location))["output"]
+    rows = (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"]
+    assert schedule(rows[:5]) == weekdays and all(row["is_closed"] for row in rows[5:])
+    assert "Saturday: Closed" in output and "Sunday: Closed" in output
+    for group in ("everyday", "daily"):
+        await execute(f, "/set-hours " + group + " 10am-8pm", f.location)
+        rows = (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"]
+        assert len(rows) == 7 and all(row["open_time"] == "10:00:00" and row["close_time"] == "20:00:00" for row in rows)
+    events = list((await f.db.scalars(select(AuditEvent).where(AuditEvent.event_type == "admin.location.updated"))).all())
+    assert len(events) == 6
+    assert all(event.details == {"changed_fields": "hours"} and event.actor_user_id == f.user
+        and event.resource_id == f.location and event.business_id == f.bid for event in events)
+
+
+@pytest.mark.parametrize("value,detail", [
+    ("mon-fri 8am-6pm; saturday 10am-25:00", "I couldn't understand those hours"),
+    ("mon-fri 8am-6pm; weekends 8pm-10am", "I couldn't understand those hours"),
+    ("mon-fri 8am-6pm; fri closed", "Friday appears more than once"),
+    ("everyday closed; weekends 10am-8pm", "Saturday appears more than once"),
+    ("weekdays closed; sun closed; sunday closed", "Sunday appears more than once"),
+])
+async def test_invalid_bulk_hours_leave_existing_week_and_audit_unchanged(admin, value, detail):
+    f = admin
+    await execute(f, "/set-hours everyday 9am-5pm", f.location)
+    before = (await f.client.get(f.base + "/locations/" + f.location)).json()
+    audit_before = (await f.client.get(f.base + "/audit")).json()
+    response = await command(f, "/set-hours " + value, f.location)
+    assert response.status_code == 422 and detail in response.json()["detail"]
+    assert "/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed" in response.json()["detail"]
+    assert not any(word in response.text for word in ("LocationUpdate", "day_of_week", "Traceback", SECRET))
+    assert (await f.client.get(f.base + "/locations/" + f.location)).json() == before
+    assert (await f.client.get(f.base + "/audit")).json() == audit_before
 
 
 async def test_friendly_faq_uses_current_scope_and_first_pipe_only(admin):
@@ -249,7 +299,7 @@ async def test_help_and_actions_use_current_central_role_policy(admin, role):
         assert (await command(f, "/" + name)).status_code == (200 if role == "owner" else 403)
     assert (await command(f, "/bot-name")).status_code == 200
     assert (await command(f, "/bot-name Updated")).status_code == (200 if role in {"owner", "admin"} else 403)
-    assert (await command(f, '/set-hours monday closed', f.location)).status_code == (200 if role in {"owner", "admin", "manager"} else 403)
+    assert (await command(f, '/set-hours weekdays 9am-9pm; weekends closed', f.location)).status_code == (200 if role in {"owner", "admin", "manager"} else 403)
 
 
 @pytest.mark.parametrize("state,expected", [("anonymous", 401), ("csrf_missing", 403), ("csrf_bad", 403), ("inactive_user", 401), ("revoked", 401), ("expired", 401), ("inactive_business", 404), ("membership_removed", 404)])
@@ -277,6 +327,7 @@ async def test_auth_session_membership_and_csrf_required(admin, state, expected)
         await f.db.delete(await f.db.scalar(select(BusinessMembership).where(BusinessMembership.business_id == f.bid)))
     await f.db.commit()
     assert (await command(f, "/status")).status_code == expected
+    assert (await command(f, "/set-hours weekdays 9am-9pm; weekends closed", f.location)).status_code == expected
     if state in {"anonymous", "inactive_user", "revoked", "expired"}:
         assert (await f.client.get(f.base + "/commands")).status_code == expected
 
@@ -288,6 +339,7 @@ async def test_tenant_path_location_and_memberships_cannot_be_spoofed(admin):
     assert (await command(f, "/status", f.foreign_location)).status_code == 404
     assert (await command(f, "/location " + f.foreign_location)).status_code == 404
     assert (await command(f, '/add-faq Q | A', f.foreign_location)).status_code == 404
+    assert (await command(f, '/set-hours weekdays 9am-9pm', f.foreign_location)).status_code == 404
     f.db.add(BusinessMembership(user_id=f.user, business_id=UUID(f.foreign), role="viewer"))
     await f.db.commit()
     foreign_base = f.base.replace(str(f.bid), f.foreign)
@@ -312,7 +364,7 @@ async def test_mutation_validation_does_not_partially_write_or_audit(admin, valu
     response = await command(f, value, f.location)
     assert response.status_code == 422 and SECRET not in response.text
     if value.startswith("/set-hours"):
-        assert "/set-hours monday 9am 10pm" in response.json()["detail"]
+        assert "/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed" in response.json()["detail"]
     elif value.startswith("/add-faq"):
         assert "/add-faq Do you have parking? | Street parking only." in response.json()["detail"]
     assert (await f.client.get(f.base + "/assistant")).json() == before
@@ -378,7 +430,7 @@ async def test_provider_test_reuses_sealed_path_and_never_exposes_credentials(ad
     assert f.requests == []
 
 
-@pytest.mark.parametrize("operation", ["assistant", "hours", "faq", "test"])
+@pytest.mark.parametrize("operation", ["assistant", "hours", "bulk_hours", "faq", "test"])
 async def test_shared_action_audit_failure_rolls_back_command_state(admin, operation):
     f = admin
     from budbot.services import admin_actions
@@ -387,6 +439,7 @@ async def test_shared_action_audit_failure_rolls_back_command_state(admin, opera
     value, location = {
         "assistant": ("/bot-name Must roll back", None),
         "hours": ('/set-hours monday closed', f.location),
+        "bulk_hours": ('/set-hours mon-fri 9am-9pm; weekends closed', f.location),
         "faq": ('/add-faq Q | A', None),
         "test": ("/test", None),
     }[operation]

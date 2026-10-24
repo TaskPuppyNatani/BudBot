@@ -313,6 +313,7 @@ shortcuts using the same validation, permissions and audit actions.
 /help
 /locations
 /location Main
+/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed
 /set-hours monday 9am 10pm
 /set-hours monday closed
 /add-faq Do you have parking? | Street parking only.
@@ -320,14 +321,30 @@ shortcuts using the same validation, permissions and audit actions.
 /audit 20
 ```
 
-`/set-hours` changes only the named day at the selected location. Other days stay
-as they are. Full day names and common abbreviations work (`mon`, `tues`, `wed`,
-`thurs`, `fri`, `sat`, `sun`), without regard to capitalization. Use ordinary times
-such as `9am 10pm`, `9:30 AM 5:30 PM`, or `09:00 22:00`; `noon`, `midnight`, and
-an optional `to` or dash between times also work. The closing time must be later
-on the same day. Overnight or invalid times are rejected with an example, rather
-than guessed. `closed` marks that day closed. Use **Locations** for the full weekly
-editor or to clear an unconfigured day.
+`/set-hours` changes only the named days at the selected location; other days
+stay as they are. Separate schedule groups with semicolons. Full names and common
+abbreviations work (`mon`, `tue`/`tues`, `wed`, `thu`/`thur`/`thurs`, `fri`, `sat`,
+`sun`), without regard to capitalization. Day ranges include both ends, such as
+`mon-fri` or `monday-friday`; ranges across Sunday, such as `fri-mon`, also work.
+Use `weekdays` for Monday–Friday, `weekends` for Saturday–Sunday, or `everyday` /
+`daily` for all seven days. For example:
+
+```text
+/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed
+/set-hours weekdays 9am-9pm
+/set-hours weekends closed
+/set-hours everyday 10am-8pm
+```
+
+For a quick edit, `/set-hours monday 9am 10pm` or `/set-hours mon closed` still
+works. Ordinary times such as `9am-9pm`, `9:30 AM 5:30 PM`, `9 am-9 pm`, or
+`09:00 22:00` are accepted; `noon`, `midnight`, and `to` between times also work.
+The closing time must be later on the same day. Overnight or invalid times are
+rejected with an example, rather than guessed. `closed` marks the named days
+closed. Each day may appear only once per command. All groups must validate
+before the schedule is saved together; an invalid or overlapping group changes
+nothing. Use **Locations** for the full weekly editor or to clear an unconfigured
+day.
 
 `/add-faq` uses the first `|` to separate the question from its answer. Further
 `|` characters are part of the answer. The selected location gets its own FAQ;
@@ -355,7 +372,7 @@ console with horizontal/vertical scrolling and complete, untruncated output.
 | `/locations` | List this business's location names and active state, up to 50; use Locations for the rest. |
 | `/location Main` | Choose a location by name; `/location` shows the selection. The menu's Business defaults choice clears it; `/location --business` remains an optional shortcut. |
 | `/hours` | Show the selected location's configured weekly hours; no inferred holiday/open-now claims. |
-| `/set-hours monday 9am 10pm` | Update one day's hours, preserving other days. `/set-hours monday closed` marks it closed. |
+| `/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed` | Update named days together, preserving other days. Single-day quick edits such as `/set-hours monday closed` still work. |
 | `/bot-name [name]` | Show or change the assistant name for the selection, without changing its stable internal ID. |
 | `/greeting [text]` | Show or change the greeting for the selection. |
 | `/faq [query]` | List/search FAQs with readable location and customer-visibility labels. A selected location includes business FAQs; Business defaults lists all business-owned scopes. Up to 25 results. |
@@ -385,7 +402,7 @@ Cookie-authenticated `POST .../commands/execute` accepts only the following tran
 shape; this is an API example, not text an owner needs to type:
 
 ```json
-{"input":"/set-hours monday 9am 10pm","location_id":"<selected-location-id>"}
+{"input":"/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed","location_id":"<selected-location-id>"}
 ```
 
 Every execution POST, including read commands, requires `X-CSRF-Token`. Current
@@ -402,8 +419,9 @@ dashboard; customer preview retains normal active-location restrictions.
 The response retains `location_id` and an optional same-origin `preview_url` for
 clients; these are not displayed as ordinary command text.
 
-Friendly hours input builds `LocationHoursInput`, locks/reloads the tenant location,
-merges one day into the current week, and calls the existing audited
+Friendly hours input validates every group into `LocationHoursInput` rows, rejects
+duplicate days, locks/reloads the tenant location, merges the named days into
+the current week, and calls the existing audited
 `LocationUpdate` action. The structured location API still replaces the supplied
 weekly list. Friendly FAQ input builds `FAQCreate` with the current location (or
 null) and uses KnowledgeService's scope, duplicate and length validation.

@@ -5,6 +5,7 @@ from budbot.commands.admin.bot_name import bot_name
 from budbot.commands.admin.compliance import compliance
 from budbot.commands.admin.enabled import set_enabled
 from budbot.commands.admin.greeting import greeting
+from budbot.commands.admin.hours_input import HOURS_EXAMPLE
 from budbot.commands.admin.knowledge import add_faq, faq
 from budbot.commands.admin.locations import hours, location, locations, set_hours
 from budbot.commands.admin.provider import provider, test
@@ -18,7 +19,7 @@ def register_admin_commands(registry):
         ("locations", "List location names and whether they are active.", locations, {"location.read"}, "/locations", 0),
         ("location", "Choose a location by name, or choose Business defaults in the menu.", location, {"location.read"}, "/location Main", None),
         ("hours", "Show the selected location's weekly hours.", hours, {"location.read"}, "/hours", 0),
-        ("set-hours", "Change one day's hours; other days stay as they are.", set_hours, {"location.write"}, '/set-hours monday 9am 10pm; or /set-hours monday closed', None),
+        ("set-hours", "Set hours for days or groups; unnamed days stay as they are.", set_hours, {"location.write"}, HOURS_EXAMPLE, None),
         ("bot-name", "Show the assistant name; change it if your account allows.", bot_name, {"assistant.read"}, "/bot-name [name]", None),
         ("greeting", "Show the greeting; change it if your account allows.", greeting, {"assistant.read"}, "/greeting [text]", None),
         ("faq", "Read or search FAQs; use the FAQs page to edit them.", faq, {"faq.read"}, "/faq [query]", None),

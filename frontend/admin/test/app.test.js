@@ -79,7 +79,7 @@ test("admin commands use the selected tenant and CSRF mutation client, render te
   const original = api.request;
   api.request = async path => path.endsWith("/commands") ? [
     { name: "help", description: "Available commands", argument_hint: "" }, { name: "location", argument_hint: "/location Main" },
-    { name: "set-hours", argument_hint: "/set-hours monday 9am 10pm" },
+    { name: "set-hours", argument_hint: "/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed" },
     { name: "add-faq", argument_hint: "/add-faq Do you have parking? | Street parking only." },
   ] : original(path);
   api.mutate = async (path, method, payload) => {
@@ -89,7 +89,7 @@ test("admin commands use the selected tenant and CSRF mutation client, render te
   app.tab = "Commands"; await app.start();
   const suggestions = all(root).find(node => node.tagName === "datalist");
   assert.deepEqual(suggestions.children.map(node => node.value), ["/help", "/location", "/set-hours", "/add-faq"]);
-  assert.ok(suggestions.textContent.includes("/set-hours monday 9am 10pm"));
+  assert.ok(suggestions.textContent.includes("/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed"));
   assert.ok(suggestions.textContent.includes("/add-faq Do you have parking? | Street parking only."));
   assert.ok(!/JSON|day_of_week|UUID|location_id/.test(suggestions.textContent));
   const input = field(root, "Command"); input.value = "/location Main"; input.dispatch("input");

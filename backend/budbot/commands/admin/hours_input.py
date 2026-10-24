@@ -12,11 +12,17 @@ _DAYS = (
     ("friday", "fri"), ("saturday", "sat"), ("sunday", "sun"),
 )
 _DAY_INDEX = {name: day for day, names in enumerate(_DAYS) for name in names}
+_DAY_GROUPS = {
+    "weekdays": tuple(range(5)), "weekends": (5, 6),
+    "everyday": tuple(range(7)), "daily": tuple(range(7)),
+}
+_GROUP = re.compile(r"(?P<first>[a-z]+\.?)(?:\s*[-–]\s*(?P<last>[a-z]+\.?))?\s+(?P<hours>.+)", re.IGNORECASE)
 _TIME = r"(?:noon|midnight|\d{1,2}(?::\d{2})?(?:\s*[ap]\.?m\.?)?)"
 _RANGE = re.compile(rf"(?P<open>{_TIME})(?:\s+to\s+|\s*[-–]\s*|\s+)(?P<close>{_TIME})", re.IGNORECASE)
+HOURS_EXAMPLE = "/set-hours mon-fri 9am-9pm; sat 10am-8pm; sun closed"
 HOURS_GUIDANCE = (
-    "I couldn't understand those hours. Try:\n/set-hours monday 9am 10pm\n"
-    "Or: /set-hours monday closed\nThe closing time must be later than the opening time on the same day."
+    "I couldn't understand those hours. Try:\n" + HOURS_EXAMPLE +
+    "\nThe closing time must be later than the opening time on the same day."
 )
 
 
@@ -35,17 +41,40 @@ def _time(value: str) -> time:
     return time(hour, minute)
 
 
-def parse_hours(value: str) -> LocationHoursInput:
+def _days(first: str, last: str | None) -> tuple[int, ...]:
+    first = first.casefold().rstrip(".")
+    if last is not None:
+        start, end = _DAY_INDEX[first], _DAY_INDEX[last.casefold().rstrip(".")]
+        # Inclusive ranges can cross Sunday, e.g. fri-mon.
+        return tuple((start + offset) % 7 for offset in range((end - start) % 7 + 1))
+    return _DAY_GROUPS[first] if first in _DAY_GROUPS else (_DAY_INDEX[first],)
+
+
+def parse_hours(value: str) -> tuple[LocationHoursInput, ...]:
+    """Validate the entire schedule before returning any rows to the writer."""
     try:
-        day, hours = value.strip().split(maxsplit=1)
-        day_index = _DAY_INDEX[day.casefold().rstrip(".")]
-        if hours.casefold() == "closed":
-            return LocationHoursInput(day_of_week=day_index, is_closed=True)
-        match = _RANGE.fullmatch(hours)
-        if match is None:
-            raise ValueError()
-        return LocationHoursInput(day_of_week=day_index,
-            open_time=_time(match["open"]), close_time=_time(match["close"]))
+        rows = []
+        seen = set()
+        for group in value.split(";"):
+            match = _GROUP.fullmatch(group.strip())
+            if match is None:
+                raise ValueError()
+            days = _days(match["first"], match["last"])
+            hours = match["hours"].strip()
+            closed = hours.casefold() == "closed"
+            times = None if closed else _RANGE.fullmatch(hours)
+            if not closed and times is None:
+                raise ValueError()
+            for day in days:
+                if day in seen:
+                    raise CommandError("COMMAND_ARGUMENT_ERROR",
+                        f"{_DAYS[day][0].capitalize()} appears more than once. Include each day only once.\nTry:\n{HOURS_EXAMPLE}",
+                        status_code=422)
+                seen.add(day)
+                rows.append(LocationHoursInput(day_of_week=day, is_closed=closed,
+                    open_time=None if closed else _time(times["open"]),
+                    close_time=None if closed else _time(times["close"])))
+        return tuple(sorted(rows, key=lambda row: row.day_of_week))
     except (ValueError, KeyError):
         # Includes the existing model's range validation; never echo input.
         raise CommandError("COMMAND_ARGUMENT_ERROR", HOURS_GUIDANCE, status_code=422) from None
