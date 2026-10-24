@@ -255,7 +255,7 @@ List/manage FAQ entries within the user's permitted business/location scope.
 
 ### `/add-faq`
 
-Create a new FAQ entry with explicit business-wide or location-specific scope.
+Create a new FAQ for the selected working location, or a business-wide FAQ when Business defaults is selected.
 
 ### `/disable`
 
@@ -302,76 +302,119 @@ Sensitive secrets must never be included in audit output.
 
 ## M9B Pass 5 authenticated execution
 
-Initial trace: admin `/help` was partial (the existing M4 handler/registry had no
-authenticated HTTP transport); the other sixteen admin commands were missing
-(empty stub modules, no registrations). Customer handlers were already complete
-and remain separate. Pass 5 reuses the M4 parser, permission evaluator, metadata
-and help handler and registers only the missing admin handlers.
+### Simple owner workflow
 
-The dashboard's **Commands** section is a convenience interface. The dashboard
-remains the primary settings editor. `GET /api/v1/businesses/{business_id}/commands`
-returns currently permitted admin metadata/autocomplete. Cookie-authenticated
-`POST .../commands/execute` accepts only:
-
-```json
-{"input":"/help","location_id":null}
-```
-
-Every execution POST (including read commands) requires `X-CSRF-Token`. Active
-account/session, current membership, active business and central role permissions
-are resolved on every request. Caller-supplied permissions, actor, tenant, scope,
-provider URL or credential are not accepted. The old business-ID header grants no
-administrative access. Customer execution remains at `/api/v1/commands/execute`,
-with customer session/compliance checks and no access to admin handlers.
-
-The response includes command text output, authorized help metadata when applicable,
-`location_id` and an optional same-origin `preview_url`. Working location is local
-to the dashboard panel/request, never a customer or admin authentication session.
-Pass the returned location ID on the next request. Every supplied location is
-tenant-checked again. `/location --business` clears it; reload, business switching
-and logout clear panel state. Administrators can inspect/edit inactive locations,
-as in the dashboard; public preview retains normal active-location/compliance checks.
-
-| Command | Arguments and effect | Required permission |
-| --- | --- | --- |
-| `/help` | Existing permission-filtered help, with syntax/autocomplete | Authenticated member with `business.read` |
-| `/status` | Business/assistant enabled state and working location; provider configuration status only when permitted, without live probes | `business.read`, `assistant.read` |
-| `/locations` | Location names, UUIDs and active flags (up to 50; dashboard lists the remainder) | `location.read` |
-| `/location [name or UUID]` | Show/select exact normalized name or UUID; ambiguous names require UUID; `--business` selects defaults | `location.read` |
-| `/hours` | Configured weekly hours; no inferred live/holiday status | `location.read` |
-| `/set-hours {"hours":[...]}` | Replace all weekly hours for the working location with existing `LocationUpdate` validation; `[]` clears unconfigured hours | `location.write` |
-| `/bot-name [name]` | Show effective name; nonempty text writes the business default or selected location override without changing IDs | `assistant.read`; writes additionally `assistant.write` |
-| `/greeting [text]` | Show/update greeting in the same scope | `assistant.read`; writes additionally `assistant.write` |
-| `/faq [query]` | List/search administrative FAQs including drafts/disabled entries; selected location includes business fallback; no selection lists all tenant scopes; up to 25 results; edit/disable in dashboard | `faq.read` |
-| `/add-faq {"question":"...","answer":"...","location_id":null}` | Create using `FAQCreate` and KnowledgeService; explicit `location_id` is required (`null` means business-wide); optional `enabled`/`is_public` | `faq.write` |
-| `/disable [--confirm]` | Set assistant enabled=false in current scope. Business default requires the explicit `--confirm` confirmation. Existing location overrides still apply | `assistant.write` |
-| `/enable` | Set assistant enabled=true in current scope | `assistant.write` |
-| `/provider` | Safe provider/model/runtime/credential-configured metadata; make configuration or credential changes in AI Provider dashboard | `provider.read` (owner) |
-| `/test` | Sealed Pass 4 saved-profile diagnostic, including exact compatible model discovery; no business/customer state mutation; safe test audit event | `provider.write` (owner) |
-| `/preview` | `/widget/?business_id=<current-business>`; creates a separate customer session without passing owner tokens | `business.read` |
-| `/compliance` | Business or selected-location resolution and age notice; informational only, no rule updates/URL imports | `compliance.read` |
-| `/audit [1-50]` | Latest sanitized AuditHistoryService events (default 10), no raw stored details | `audit.read` (owner) |
-
-Example structured hours:
+Open **Admin → Commands** and choose a **Command location**. Use a location name,
+not an ID. Choose **Business defaults** for business-wide FAQs and the default
+assistant settings. The dashboard remains the primary editor; commands are quick
+shortcuts using the same validation, permissions and audit actions.
 
 ```text
-/set-hours {"hours":[{"day_of_week":0,"open_time":"09:00","close_time":"17:00"},{"day_of_week":1,"is_closed":true}]}
+/help
+/locations
+/location Main
+/set-hours monday 9am 10pm
+/set-hours monday closed
+/add-faq Do you have parking? | Street parking only.
+/test
+/audit 20
 ```
 
-Days use Monday=0 through Sunday=6. Supplied hours replace the entire weekly list;
-omitted days are unconfigured. Invalid, duplicate, reversed or null rows fail before
-writing. FAQ creation requires an explicit scope and uses the existing duplicate
-and tenant-location validation. Renaming/greeting and enable/disable target the
-business default when no working location is selected, otherwise an explicit
-location assistant override. Clearing overrides remains a dashboard operation.
+`/set-hours` changes only the named day at the selected location. Other days stay
+as they are. Full day names and common abbreviations work (`mon`, `tues`, `wed`,
+`thurs`, `fri`, `sat`, `sun`), without regard to capitalization. Use ordinary times
+such as `9am 10pm`, `9:30 AM 5:30 PM`, or `09:00 22:00`; `noon`, `midnight`, and
+an optional `to` or dash between times also work. The closing time must be later
+on the same day. Overnight or invalid times are rejected with an example, rather
+than guessed. `closed` marks that day closed. Use **Locations** for the full weekly
+editor or to clear an unconfigured day.
 
-Commands reuse shared audited actions with the equivalent API routes for assistant,
-hours, FAQ and provider-test writes. They produce the same event types and safe
-field metadata once, with no command input, FAQ content, provider credentials,
-ciphertext or raw provider responses in audit details. Provider and credential
-configuration never have command-line setters. Errors show fixed safe parser,
-validation/permission messages; unexpected failures roll back and return a generic
-retry/reload message. Commands are not persisted or logged as conversational history.
+`/add-faq` uses the first `|` to separate the question from its answer. Further
+`|` characters are part of the answer. The selected location gets its own FAQ;
+**Business defaults** creates a business-wide FAQ. New FAQs are enabled and visible
+to customers. Use **FAQs** to edit, hide or disable entries. The existing limits
+(question 1–500 characters, answer 1–10,000) and duplicate-question checks apply.
+You do not need JSON, numeric day indexes or location IDs.
+
+Normal location output shows names and active state. If two locations have the
+same name, choose one in **Command location**. Only those duplicate names also
+show addresses and selection IDs as an advanced fallback; UUID input remains
+supported without appearing in normal help examples.
+
+Provider results use plain English, such as **Connected**, **Could not reach the
+AI provider**, or **The configured AI model could not be found**, with a next step
+when needed. `/provider` never shows a saved key. `/audit` shows readable change
+labels and already-sanitized details, not raw JSON or internal event/diagnostic
+codes. It keeps the requested event count (default 10, maximum 50) in the bounded
+console with horizontal/vertical scrolling and complete, untruncated output.
+
+| Command | Owner-facing behavior |
+| --- | --- |
+| `/help` | Show commands your account can use, with simple examples. |
+| `/status` | Show the business, assistant on/off state, selected location, and AI setup status when permitted. It does not run a live AI test. |
+| `/locations` | List this business's location names and active state, up to 50; use Locations for the rest. |
+| `/location Main` | Choose a location by name; `/location` shows the selection. The menu's Business defaults choice clears it; `/location --business` remains an optional shortcut. |
+| `/hours` | Show the selected location's configured weekly hours; no inferred holiday/open-now claims. |
+| `/set-hours monday 9am 10pm` | Update one day's hours, preserving other days. `/set-hours monday closed` marks it closed. |
+| `/bot-name [name]` | Show or change the assistant name for the selection, without changing its stable internal ID. |
+| `/greeting [text]` | Show or change the greeting for the selection. |
+| `/faq [query]` | List/search FAQs with readable location and customer-visibility labels. A selected location includes business FAQs; Business defaults lists all business-owned scopes. Up to 25 results. |
+| `/add-faq Question? \| Answer.` | Add a customer FAQ for the selection. |
+| `/disable [--confirm]` | Turn off the assistant for the selection. Business defaults requires `/disable --confirm`; locations with their own setting keep it. |
+| `/enable` | Turn on the assistant for the selection. |
+| `/provider` | Show saved AI provider/model settings and whether a key is saved. Change these in AI Provider. |
+| `/test` | Run the saved AI connection test; a small provider charge may apply. |
+| `/preview` | Provide an Open customer preview link; the preview uses the normal customer location/age checks. |
+| `/compliance` | Show the customer rules and age requirement; required protections cannot be turned off. |
+| `/audit [1-50]` | Show recent settings changes with readable, sanitized details. |
+
+Owners/admins can change assistant settings and FAQs; managers can change hours;
+viewers have read access. AI provider commands and audit history remain owner-only.
+Help/autocomplete omit commands unavailable to the current role; showing a name or
+greeting does not grant permission to change it.
+
+### API and security reference
+
+Initial trace: admin `/help` was partial (its M4 handler had no authenticated HTTP
+transport); the other sixteen commands were missing. Pass 5 reuses the existing
+parser, executor and help handler. The owner-friendly syntax is a translation
+layer; the structured models and business APIs remain available internally.
+
+`GET /api/v1/businesses/{business_id}/commands` returns permitted metadata.
+Cookie-authenticated `POST .../commands/execute` accepts only the following transport
+shape; this is an API example, not text an owner needs to type:
+
+```json
+{"input":"/set-hours monday 9am 10pm","location_id":"<selected-location-id>"}
+```
+
+Every execution POST, including read commands, requires `X-CSRF-Token`. Current
+account/session, membership, active business and central role permissions are
+resolved on every request. Caller-supplied permissions, actor, tenant, scope,
+provider URL or credentials are not accepted. The business-ID header grants no
+administrative access. Customer commands remain on their separate customer-session
+transport and retain the normal compliance checks.
+
+Working location and output are ephemeral panel state and clear on reload,
+business switching and logout. Every supplied location ID is checked against the
+current business. Administrators can inspect/edit inactive locations, as in the
+dashboard; customer preview retains normal active-location restrictions.
+The response retains `location_id` and an optional same-origin `preview_url` for
+clients; these are not displayed as ordinary command text.
+
+Friendly hours input builds `LocationHoursInput`, locks/reloads the tenant location,
+merges one day into the current week, and calls the existing audited
+`LocationUpdate` action. The structured location API still replaces the supplied
+weekly list. Friendly FAQ input builds `FAQCreate` with the current location (or
+null) and uses KnowledgeService's scope, duplicate and length validation.
+Commands do not duplicate mutation/audit logic or change underlying policy.
+
+Provider tests reuse the sealed saved-config diagnostic path. Stored/API diagnostic
+codes, the audit read projection and audit persistence remain unchanged; only command
+presentation translates them. Audit output uses fixed labels and recognized metadata,
+with no arbitrary field/value fallback. No command input, FAQ content, credentials,
+ciphertext, raw provider responses or stack traces are included in audit details.
+Unexpected command failures roll back and return safe reload/retry guidance.
 
 ## Safe custom commands
 

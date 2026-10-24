@@ -278,7 +278,7 @@ export class AdminApp {
   commandsView() {
     const section = this.managementSection("Admin commands", "business.read");
     if (!this.panelLoaded || !this.api.can(this.businessId, "business.read")) return section;
-    section.append(this.node("p", "Commands use your current business permissions. Start with /help. The dashboard remains the editor for complex settings. Working location is local to this panel; /location --business returns to business defaults."));
+    section.append(this.node("p", "Use Command location to choose where to make changes. Start with /help for examples. You can also use the regular settings pages."));
     const selection = this.field(section, "Command location", this.commandLocationId, { trackChanges: false,
       options: [["", "Business defaults"], ...this.locations.map(item => [item.id, `${item.display_name}${item.active ? "" : " (inactive)"}`])] });
     selection.addEventListener("change", () => { this.commandLocationId = selection.value || null; this.commandOutput = ""; this.commandPreview = null; this.render(); });
@@ -301,7 +301,7 @@ export class AdminApp {
         this.commandOutput = response.output;
         this.commandPreview = response.preview_url === previewUrl(id) ? response.preview_url : null;
         this.commandInput = ""; this.render();
-      }, "Command completed. Reload settings to refresh other dashboard sections after changes.");
+      }, "Done. Use Reload settings to see changes on the other pages.");
     });
     section.append(form, this.node("pre", this.commandOutput || "Run /help to see available commands and syntax.", {
       className: "command-output", role: "region", "aria-label": "Command output", tabIndex: 0,

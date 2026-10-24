@@ -12,12 +12,12 @@ async def compliance(context, parsed):
     if item:
         resolution = ComplianceResolver().resolve(business.compliance_domain, item if item.active else None, business_id=business.id)
         profile = resolution.profile
-        label = f"Location compliance: {resolution.status.value} | {resolution.reason_code or 'OK'}"
+        label = f"Rules for {item.display_name}"
     else:
         profile = await ComplianceService(context.session, context.tenant).get_active_profile(business.id)
-        label = "Business compliance profile"
+        label = "Business rules"
     if profile is None:
-        return result(context, parsed, label + "\nNo supported effective profile. Customer compliance continues to fail closed.")
-    return result(context, parsed, f"{label}: {profile.profile_id} v{profile.version}\n"
-        f"Age gate required: {profile.requires_age_gate}; minimum age: {profile.minimum_age}\n"
-        f"{profile.website_attestation_notice}\nMandatory controls cannot be disabled through commands.")
+        return result(context, parsed, label + "\nThe rules for this location could not be confirmed. Check its address and region in Locations. Customer restrictions remain in place.")
+    age = f"Required ({profile.minimum_age}+)" if profile.requires_age_gate else "Not required"
+    return result(context, parsed, f"{label}: {profile.jurisdiction}\nAge check: {age}\n"
+        f"{profile.website_attestation_notice}\nRequired customer protections cannot be turned off with commands.")

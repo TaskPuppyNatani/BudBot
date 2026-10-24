@@ -77,13 +77,21 @@ test("admin commands use the selected tenant and CSRF mutation client, render te
   const { root, app, api, writes } = setup();
   const output = "<script>command result</script>\n" + Array.from({ length: 40 }, () => "01234567-89ab-cdef-0123-456789abcdef".repeat(16)).join("\n");
   const original = api.request;
-  api.request = async path => path.endsWith("/commands") ? [{ name: "help", description: "Available commands", argument_hint: "" }, { name: "location", argument_hint: "/location [name]" }] : original(path);
+  api.request = async path => path.endsWith("/commands") ? [
+    { name: "help", description: "Available commands", argument_hint: "" }, { name: "location", argument_hint: "/location Main" },
+    { name: "set-hours", argument_hint: "/set-hours monday 9am 10pm" },
+    { name: "add-faq", argument_hint: "/add-faq Do you have parking? | Street parking only." },
+  ] : original(path);
   api.mutate = async (path, method, payload) => {
     writes.push({ path, method, payload });
     return { output, location_id: "loc", preview_url: "/widget/?business_id=a" };
   };
   app.tab = "Commands"; await app.start();
-  assert.deepEqual(all(root).filter(node => node.tagName === "datalist")[0].children.map(node => node.value), ["/help", "/location"]);
+  const suggestions = all(root).find(node => node.tagName === "datalist");
+  assert.deepEqual(suggestions.children.map(node => node.value), ["/help", "/location", "/set-hours", "/add-faq"]);
+  assert.ok(suggestions.textContent.includes("/set-hours monday 9am 10pm"));
+  assert.ok(suggestions.textContent.includes("/add-faq Do you have parking? | Street parking only."));
+  assert.ok(!/JSON|day_of_week|UUID|location_id/.test(suggestions.textContent));
   const input = field(root, "Command"); input.value = "/location Main"; input.dispatch("input");
   input.parent.parent.dispatch("submit"); await app.task;
   assert.deepEqual(writes, [{ path: "/api/v1/businesses/a/commands/execute", method: "POST", payload: { input: "/location Main", location_id: null } }]);

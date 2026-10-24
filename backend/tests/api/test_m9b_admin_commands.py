@@ -1,7 +1,6 @@
 """Authenticated command transport, service/audit parity and customer separation."""
 
 import base64
-import json
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import UUID
@@ -19,7 +18,9 @@ from budbot.models.location import Location
 from budbot.models.session import CustomerSession
 from budbot.models.user import BusinessMembership
 from budbot.providers.ai.registry import build_ai_provider_registry
+from budbot.schemas.provider import ProviderConnectionRead, ProviderDiagnosticCode
 from budbot.services.business_service import BusinessService
+from budbot.services.provider_service import ProviderService
 
 NAMES = {"help", "status", "locations", "location", "hours", "set-hours", "bot-name", "greeting", "faq", "add-faq", "disable", "enable", "provider", "test", "preview", "compliance", "audit"}
 SECRET = "synthetic-command-provider-key"
@@ -73,15 +74,18 @@ async def test_all_seventeen_commands_use_existing_scoped_services(admin):
     assert {item["name"] for item in metadata.json()} == NAMES
     help_result = await execute(f, "/HELP")
     assert {item["name"] for item in help_result["commands"]} == NAMES
-    assert '/set-hours {"hours"' in help_result["output"]
+    assert '/set-hours monday 9am 10pm' in help_result["output"]
+    assert '/add-faq Do you have parking? | Street parking only.' in help_result["output"]
+    assert not any(value in help_result["output"] for value in ('JSON', 'day_of_week', 'location_id', 'UUID'))
     assert "Test Assistant" in (await execute(f, "/status"))["output"]
-    assert f.location in (await execute(f, "/locations"))["output"]
+    listed = (await execute(f, "/locations"))["output"]
+    assert "Main — Active" in listed and f.location not in listed
     assert (await execute(f, "/location"))["location_id"] is None
     assert (await execute(f, "/location main"))["location_id"] == f.location
     assert (await execute(f, "/location " + f.location))["location_id"] == f.location
     assert "not configured" in (await execute(f, "/hours", f.location))["output"]
-    hours = {"hours": [{"day_of_week": 0, "open_time": "09:00", "close_time": "17:00"}, {"day_of_week": 1, "is_closed": True}]}
-    assert "Monday: 9:00 AM" in (await execute(f, "/set-hours " + json.dumps(hours), f.location))["output"]
+    assert "Monday: 9:00 AM" in (await execute(f, "/set-hours monday 9am 5pm", f.location))["output"]
+    await execute(f, "/set-hours tuesday closed", f.location)
     location = (await f.client.get(f.base + "/locations/" + f.location)).json()
     assert location["hours"][0]["open_time"] == "09:00:00"
     assert "Location name" in (await execute(f, "/bot-name Location name", f.location))["output"]
@@ -90,8 +94,7 @@ async def test_all_seventeen_commands_use_existing_scoped_services(admin):
     assert effective["display_name"] == "Location name" and effective["greeting"] == "Local greeting"
     assert (await f.client.get(f.base + "/assistant")).json()["display_name"] == "Test Assistant"
     assert "No matching FAQs" in (await execute(f, "/faq"))["output"]
-    faq = {"question": "Parking?", "answer": "Verified lot.", "location_id": f.location}
-    assert "FAQ created" in (await execute(f, "/add-faq " + json.dumps(faq)))["output"]
+    assert "FAQ added for Main" in (await execute(f, "/add-faq Parking? | Verified lot.", f.location))["output"]
     assert "Verified lot" in (await execute(f, "/faq parking", f.location))["output"]
     assert (await f.client.get(f.base + "/faqs")).json()[0]["location_id"] == f.location
     await execute(f, "/disable", f.location)
@@ -99,13 +102,13 @@ async def test_all_seventeen_commands_use_existing_scoped_services(admin):
     await execute(f, "/enable", f.location)
     assert (await f.client.get(f.base + f"/locations/{f.location}/effective-assistant")).json()["enabled"]
     assert (await execute(f, "/location --business", f.location))["location_id"] is None
-    assert "unconfigured" in (await execute(f, "/provider"))["output"]
-    assert "AI_CONFIGURATION_INVALID" in (await execute(f, "/test"))["output"]
+    assert "Not set up" in (await execute(f, "/provider"))["output"]
+    assert "AI setup needs attention" in (await execute(f, "/test"))["output"]
     preview = await execute(f, "/preview")
     assert preview["preview_url"] == f"/widget/?business_id={f.bid}"
-    assert "general_retail" in (await execute(f, "/compliance"))["output"]
-    assert "resolved" in (await execute(f, "/compliance", f.location))["output"]
-    assert "admin.faq.created" in (await execute(f, "/audit 50"))["output"]
+    assert "Age check: Not required" in (await execute(f, "/compliance"))["output"]
+    assert "Rules for Main" in (await execute(f, "/compliance", f.location))["output"]
+    assert "FAQ added" in (await execute(f, "/audit 50"))["output"]
     assert await f.db.scalar(select(func.count()).select_from(CustomerSession)) == 0
 
 
@@ -125,6 +128,105 @@ async def test_business_confirmation_and_assistant_identity_are_preserved(admin)
     assert after["display_name"] == "New business name" and after["greeting"] == "New business greeting"
     assert "New business name" in (await execute(f, "/bot-name"))["output"]
     assert "New business greeting" in (await execute(f, "/greeting"))["output"]
+
+
+async def test_repeated_friendly_hours_edits_preserve_other_days_and_use_same_audit(admin):
+    f = admin
+    await execute(f, "/set-hours tues 10:00 18:00", f.location)
+    await execute(f, "/set-hours monday 9am 10pm", f.location)
+    await execute(f, "/set-hours mon 10am 9pm", f.location)
+    rows = (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"]
+    assert {row["day_of_week"]: (row["open_time"], row["close_time"]) for row in rows} == {0: ("10:00:00", "21:00:00"), 1: ("10:00:00", "18:00:00")}
+    output = (await execute(f, "/set-hours monday closed", f.location))["output"]
+    assert "Monday: Closed" in output and "Tuesday: 10:00 AM–6:00 PM" in output
+    rows = (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"]
+    assert len(rows) == 2 and rows[0]["is_closed"] and rows[0]["open_time"] is None
+    before = (await f.client.get(f.base + "/audit")).json()
+    failure = await command(f, "/set-hours monday 10pm 9am", f.location)
+    assert failure.status_code == 422 and "/set-hours monday 9am 10pm" in failure.json()["detail"]
+    assert (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"] == rows
+    assert (await f.client.get(f.base + "/audit")).json() == before
+    events = list((await f.db.scalars(select(AuditEvent).where(AuditEvent.event_type == "admin.location.updated"))).all())
+    assert len(events) == 4 and all(event.details == {"changed_fields": "hours"} for event in events)
+
+
+async def test_friendly_faq_uses_current_scope_and_first_pipe_only(admin):
+    f = admin
+    business_result = await execute(f, "/add-faq Do you deliver? | Ask the store.")
+    local_result = await execute(f, "/add-faq Do you have parking? | Street parking only. | Ask staff for help.", f.location)
+    assert business_result["output"] == "FAQ added for all locations."
+    assert local_result["output"] == "FAQ added for Main."
+    rows = (await f.client.get(f.base + "/faqs")).json()
+    by_question = {row["question"]: row for row in rows}
+    assert by_question["Do you deliver?"]["location_id"] is None
+    assert by_question["Do you have parking?"]["location_id"] == f.location
+    assert by_question["Do you have parking?"]["answer"] == "Street parking only. | Ask staff for help."
+    assert all(row["enabled"] and row["is_public"] for row in rows)
+    output = (await execute(f, "/faq", f.location))["output"]
+    assert "All locations" in output and "Main" in output and "Visible to customers" in output
+    assert not any(value in output for value in (f.location, "location_id", "scope=", "True"))
+
+
+async def test_normal_locations_hide_ids_and_duplicate_names_have_advanced_fallback(admin):
+    f = admin
+    assert f.location not in (await execute(f, "/locations"))["output"]
+    assert f.location not in (await execute(f, "/location Main"))["output"]
+    assert f.location not in (await execute(f, "/location", f.location))["output"]
+    duplicate = Location(business_id=f.bid, display_name="  MAIN  ", address_line_1="20 Second",
+        city="Portland", region="Oregon", region_code="OR", country="US", postal_code="97201", timezone="UTC", active=False)
+    f.db.add(duplicate)
+    await f.db.commit()
+    duplicate_id = str(duplicate.id)
+    listed = (await execute(f, "/locations"))["output"]
+    assert "Inactive" in listed and "20 Second" in listed
+    assert f.location in listed and duplicate_id in listed
+    ambiguous = await command(f, "/location main")
+    assert ambiguous.status_code == 409 and "menu" in ambiguous.json()["detail"]
+    assert (await execute(f, "/location " + duplicate_id))["location_id"] == duplicate_id
+
+
+@pytest.mark.parametrize("code", list(ProviderDiagnosticCode))
+async def test_owner_test_results_are_plain_english_while_audit_keeps_stable_codes(admin, code):
+    f = admin
+    diagnostic = ProviderConnectionRead(code=code, provider="openai_compatible", model="saved-model")
+    with patch.object(ProviderService, "test_connection", return_value=diagnostic):
+        output = (await execute(f, "/test"))["output"]
+    assert "AI_" not in output and "openai_compatible" not in output
+    assert "LM Studio / OpenAI-compatible" in output and "saved-model" in output
+    expected = {
+        ProviderDiagnosticCode.OK: "Connected",
+        ProviderDiagnosticCode.UNREACHABLE: "Could not reach the AI provider.",
+        ProviderDiagnosticCode.MODEL_UNAVAILABLE: "The configured AI model could not be found.",
+    }.get(code)
+    if expected:
+        assert output.startswith(expected)
+    event = await f.db.scalar(select(AuditEvent).where(AuditEvent.event_type == "admin.provider.connection_tested"))
+    assert event.details["diagnostic_code"] == code.value
+    assert event.details["success"] == (code == ProviderDiagnosticCode.OK)
+
+
+async def test_owner_audit_is_readable_sanitized_and_keeps_requested_count(admin):
+    f = admin
+    from datetime import timedelta
+    from budbot.core.time import utc_now
+    now = utc_now()
+    f.db.add_all([
+        AuditEvent(business_id=f.bid, event_type="admin.provider.connection_tested", created_at=now, details={
+            "provider_action": "connection_tested", "provider": "openai_compatible",
+            "diagnostic_code": "AI_MODEL_UNAVAILABLE", "success": False, "credential": SECRET}),
+        AuditEvent(business_id=f.bid, event_type="admin.faq.created", created_at=now - timedelta(seconds=1), details={
+            "location_id": f.location, "changed_fields": "question,answer", "enabled": True, "is_public": True, "response": SECRET}),
+        AuditEvent(business_id=f.bid, event_type=SECRET, created_at=now - timedelta(seconds=2), details={"ciphertext": SECRET}),
+    ])
+    await f.db.commit()
+    before = (await f.client.get(f.base + "/audit")).json()
+    output = (await execute(f, "/audit 2"))["output"]
+    assert "AI connection checked" in output and "The configured AI model could not be found" in output
+    assert "FAQ added" in output and "For: Main" in output and "Visible to customers" in output
+    assert not any(value in output for value in (SECRET, f.location, "AI_MODEL_UNAVAILABLE", "admin.", "diagnostic_code", "{", "}"))
+    assert output.count("UTC —") == 2
+    assert "Settings updated" in (await execute(f, "/audit 3"))["output"]
+    assert (await f.client.get(f.base + "/audit")).json() == before
 
 
 @pytest.mark.parametrize("role", ["owner", "admin", "manager", "viewer", "unknown"])
@@ -147,7 +249,7 @@ async def test_help_and_actions_use_current_central_role_policy(admin, role):
         assert (await command(f, "/" + name)).status_code == (200 if role == "owner" else 403)
     assert (await command(f, "/bot-name")).status_code == 200
     assert (await command(f, "/bot-name Updated")).status_code == (200 if role in {"owner", "admin"} else 403)
-    assert (await command(f, '/set-hours {"hours":[]}', f.location)).status_code == (200 if role in {"owner", "admin", "manager"} else 403)
+    assert (await command(f, '/set-hours monday closed', f.location)).status_code == (200 if role in {"owner", "admin", "manager"} else 403)
 
 
 @pytest.mark.parametrize("state,expected", [("anonymous", 401), ("csrf_missing", 403), ("csrf_bad", 403), ("inactive_user", 401), ("revoked", 401), ("expired", 401), ("inactive_business", 404), ("membership_removed", 404)])
@@ -185,7 +287,7 @@ async def test_tenant_path_location_and_memberships_cannot_be_spoofed(admin):
         json={"input": "/status"}, headers={"X-BudBot-Business-ID": str(f.bid)})).status_code == 404
     assert (await command(f, "/status", f.foreign_location)).status_code == 404
     assert (await command(f, "/location " + f.foreign_location)).status_code == 404
-    assert (await command(f, '/add-faq ' + json.dumps({"question": "Q", "answer": "A", "location_id": f.foreign_location}))).status_code == 404
+    assert (await command(f, '/add-faq Q | A', f.foreign_location)).status_code == 404
     f.db.add(BusinessMembership(user_id=f.user, business_id=UUID(f.foreign), role="viewer"))
     await f.db.commit()
     foreign_base = f.base.replace(str(f.bid), f.foreign)
@@ -196,11 +298,11 @@ async def test_tenant_path_location_and_memberships_cannot_be_spoofed(admin):
 
 
 @pytest.mark.parametrize("value", [
-    '/set-hours {"hours":null}', '/set-hours {"hours":[{"day_of_week":8,"is_closed":true}]}',
-    '/set-hours {"hours":[{"day_of_week":0,"open_time":"17:00","close_time":"09:00"}]}',
-    '/set-hours {"hours":[{"day_of_week":0,"is_closed":true},{"day_of_week":0,"is_closed":true}]}',
-    '/set-hours {"hours":[],"active":false}', '/add-faq {"question":"Q","answer":"A"}',
-    '/add-faq {"question":"Q","answer":null,"location_id":null}', '/add-faq not-json-' + SECRET,
+    '/set-hours monday 10pm 9am', '/set-hours flurday 9am 5pm',
+    '/set-hours monday 25:00 26:00', '/set-hours monday closed extra',
+    '/set-hours {"hours":[],"active":false}', '/add-faq Question without answer',
+    '/add-faq | No question', '/add-faq No answer |', '/add-faq missing separator ' + SECRET,
+    '/add-faq ' + 'q' * 501 + ' | Answer', '/add-faq Question | ' + 'a' * 10001,
     '/bot-name ' + 'x' * 201, '/greeting ' + 'x' * 1001,
 ])
 async def test_mutation_validation_does_not_partially_write_or_audit(admin, value):
@@ -209,6 +311,10 @@ async def test_mutation_validation_does_not_partially_write_or_audit(admin, valu
     count = await f.db.scalar(select(func.count()).select_from(AuditEvent))
     response = await command(f, value, f.location)
     assert response.status_code == 422 and SECRET not in response.text
+    if value.startswith("/set-hours"):
+        assert "/set-hours monday 9am 10pm" in response.json()["detail"]
+    elif value.startswith("/add-faq"):
+        assert "/add-faq Do you have parking? | Street parking only." in response.json()["detail"]
     assert (await f.client.get(f.base + "/assistant")).json() == before
     assert (await f.client.get(f.base + "/locations/" + f.location)).json()["hours"] == []
     assert await f.db.scalar(select(func.count()).select_from(FAQEntry)) == 0
@@ -223,12 +329,12 @@ async def test_audit_parity_with_dashboard_and_no_duplicate_events(admin):
     assert len(events) == 2 and events[0].details == events[1].details == {"changed_fields": "display_name"}
     assert events[0].resource_id == events[1].resource_id and all(event.actor_user_id == f.user for event in events)
     await f.client.patch(f.base + "/locations/" + f.location, json={"hours": []})
-    await execute(f, '/set-hours {"hours":[]}', f.location)
+    await execute(f, '/set-hours monday closed', f.location)
     events = list((await f.db.scalars(select(AuditEvent).where(AuditEvent.event_type == "admin.location.updated"))).all())
     assert len(events) == 2 and events[0].details == events[1].details == {"changed_fields": "hours"}
     faq = {"question": "Private marker", "answer": "Private answer", "location_id": None}
     assert (await f.client.post(f.base + "/faqs", json=faq)).status_code == 201
-    await execute(f, "/add-faq " + json.dumps({**faq, "question": "Different marker"}))
+    await execute(f, "/add-faq Different marker | Private answer")
     events = list((await f.db.scalars(select(AuditEvent).where(AuditEvent.event_type == "admin.faq.created"))).all())
     assert len(events) == 2 and events[0].details == events[1].details
     assert "Private marker" not in (await execute(f, "/audit 50"))["output"]
@@ -236,7 +342,7 @@ async def test_audit_parity_with_dashboard_and_no_duplicate_events(admin):
 
 async def test_faq_command_reuses_duplicate_validation_without_partial_publication(admin):
     f = admin
-    value = '/add-faq {"question":"Parking?","answer":"Verified lot.","location_id":null}'
+    value = '/add-faq Parking? | Verified lot.'
     await execute(f, value)
     before = (await f.client.get(f.base + "/audit")).json()
     response = await command(f, value.replace("Parking?", "  parking?  "))
@@ -257,7 +363,10 @@ async def test_provider_test_reuses_sealed_path_and_never_exposes_credentials(ad
         "response": SECRET, "stack_trace": SECRET, "model": SECRET}))
     await f.db.commit()
     for value in ("/provider", "/status", "/test", "/audit 50"):
-        assert SECRET not in (await execute(f, value))["output"]
+        output = (await execute(f, value))["output"]
+        assert not any(private in output for private in (SECRET, "openai_compatible", "AI_CONNECTION_OK", "runtime_status", "True", "False"))
+        if value in {"/provider", "/status"}:
+            assert "Settings complete" in output
     assert [request.url.path for request in f.requests] == ["/v1/models", "/v1/chat/completions"]
     assert all(request.headers["authorization"] == "Bearer " + SECRET for request in f.requests)
     assert (await f.client.get(f.base + "/provider")).json() == before
@@ -265,7 +374,7 @@ async def test_provider_test_reuses_sealed_path_and_never_exposes_credentials(ad
     assert event.details == {"provider_action": "connection_tested", "provider": "openai_compatible", "success": True, "diagnostic_code": "AI_CONNECTION_OK"}
     f.app.state.settings.ai_compatible_endpoints = ()
     f.requests.clear()
-    assert "AI_ENDPOINT_DENIED" in (await execute(f, "/test"))["output"]
+    assert "not approved for this installation" in (await execute(f, "/test"))["output"]
     assert f.requests == []
 
 
@@ -277,8 +386,8 @@ async def test_shared_action_audit_failure_rolls_back_command_state(admin, opera
     before_audit = (await f.client.get(f.base + "/audit")).json()
     value, location = {
         "assistant": ("/bot-name Must roll back", None),
-        "hours": ('/set-hours {"hours":[{"day_of_week":0,"is_closed":true}]}', f.location),
-        "faq": ('/add-faq {"question":"Q","answer":"A","location_id":null}', None),
+        "hours": ('/set-hours monday closed', f.location),
+        "faq": ('/add-faq Q | A', None),
         "test": ("/test", None),
     }[operation]
     original = admin_actions.record_audit_event
@@ -301,7 +410,7 @@ async def test_admin_compliance_and_enable_never_bypass_customer_age_checks(admi
     business = await f.db.get(Business, f.bid)
     business.compliance_domain, business.compliance_profile_id = "cannabis", "oregon_cannabis"
     await f.db.commit()
-    assert "oregon_cannabis" in (await execute(f, "/compliance", f.location))["output"]
+    assert "Age check: Required (21+)" in (await execute(f, "/compliance", f.location))["output"]
     await execute(f, "/enable")
     assert (await command(f, "/compliance disable")).status_code == 400
     f.client.cookies.clear()

@@ -165,7 +165,7 @@ Connection, diagnostics, discovery or credential rehydration is implemented.
 
 Open **Commands** after selecting a business. `/help` and the command input's
 suggestions use current server-filtered permissions. The optional **Command
-location** dropdown (or `/location <name or UUID>`) selects the local working
+location** dropdown (or `/location Main`) selects the local working
 scope. `/location --business` restores business defaults. Commands do not use or
 change customer sessions. The panel is ephemeral and clears on reload, business
 switch or logout; no command history or credentials are stored in the browser.
@@ -175,7 +175,13 @@ audited mutations, authenticated cookie and fresh CSRF flow. Read commands also
 use the CSRF-protected execution endpoint. Provider credentials cannot be supplied
 through commands. `/provider` exposes safe metadata, `/test` reuses Pass 4 saved
 provider diagnostics, and `/audit` renders the existing sanitized history only.
-See `docs/commands.md` for exact syntax, permissions, JSON schemas and limits.
+Use simple commands such as `/set-hours monday 9am 10pm`,
+`/set-hours monday closed`, and
+`/add-faq Do you have parking? | Street parking only.` Hours changes affect only
+the named day. FAQs use the selected location, or become business-wide when
+Business defaults is selected. No JSON or IDs are needed. Provider results and
+audit entries use plain-English labels; the full output stays in the scrollable
+console. See `docs/commands.md` for syntax, permissions and limits.
 
 ### Pass 5 manual acceptance
 
@@ -196,7 +202,9 @@ See `docs/commands.md` for exact syntax, permissions, JSON schemas and limits.
    `/help` omits privileged commands, denied writes remain denied, and business
    switching clears command output and working location.
 
-Structured `/set-hours` replaces all weekly hours. Prefer a disposable test
-location/FAQ for manual writes; the automated tests cover valid/invalid hours,
-FAQ creation and rollback without touching the operator's data. Account and
+Prefer a disposable test location/FAQ for manual writes. Try changing Monday,
+then marking Monday closed; other days must stay unchanged. Add a FAQ with
+`question | answer` and confirm it appears under the selected location (or
+Business defaults). Automated tests cover validation, scope and rollback without
+touching the operator's data. Account and
 membership management and onboarding cleanup remain a later slice.
