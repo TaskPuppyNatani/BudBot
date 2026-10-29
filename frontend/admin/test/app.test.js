@@ -319,18 +319,68 @@ test("FAQ forms create, edit, scope and disable public customer entries as text"
   assert.equal(app.busy, false);
 });
 
-test("FAQ remove and restore use the retained customer visibility state", async () => {
-  const { root, app, writes, faqs } = setup();
+test("FAQ editor offers immediate remove and restore actions without changing FAQ details", async () => {
+  const { root, app, api, writes, faqs } = setup();
+  faqs.a.push({ id: "faq-one", question: "Parking?", answer: "Street parking.", location_id: "loc", enabled: true, is_public: false });
+  let faqReads = 0;
+  const request = api.request;
+  api.request = async path => {
+    if (path.endsWith("/faqs")) faqReads += 1;
+    return request(path);
+  };
+  const confirmations = [];
+  app.confirm = message => { confirmations.push(message); return true; };
+  await app.start();
+  button(root, "FAQs").dispatch("click"); await app.task;
+  assert.ok(button(root, "Remove from customer answers"));
+  assert.equal(faqReads, 1);
+  button(root, "Edit FAQ").dispatch("click");
+  const editForm = form(root, "Edit FAQ");
+  assert.ok(button(editForm, "Remove from customer answers"));
+  button(editForm, "Remove from customer answers").dispatch("click"); await app.task;
+  assert.deepEqual(confirmations, ["Remove this answer from customer answers? Customers will stop seeing it. The FAQ is kept and can be restored later."]);
+  assert.deepEqual(writes.at(-1), { path: "/api/v1/businesses/a/faqs/faq-one", method: "PATCH", payload: { enabled: false } });
+  assert.equal(app.faqs[0].enabled, false);
+  assert.equal(field(editForm, "FAQ enabled").checked, false);
+  assert.ok(button(editForm, "Restore to customer answers"));
+  assert.ok(root.textContent.includes("Main · Disabled · Non-public"));
+  assert.equal(faqReads, 1, "remove updates the visible FAQ without a manual refresh");
+  button(editForm, "Restore to customer answers").dispatch("click"); await app.task;
+  assert.equal(confirmations.length, 1, "restoring an answer does not require another confirmation");
+  assert.equal(writes.at(-1).payload.enabled, true);
+  assert.equal(app.faqs[0].enabled, true);
+  assert.equal(field(editForm, "FAQ enabled").checked, true);
+  assert.ok(button(editForm, "Remove from customer answers"));
+  assert.ok(root.textContent.includes("Main · Enabled · Non-public"));
+  assert.equal(faqReads, 1, "restore updates the visible FAQ without a manual refresh");
+  for (const faq of [faqs.a[0], app.faqs[0]]) {
+    assert.equal(faq.question, "Parking?");
+    assert.equal(faq.answer, "Street parking.");
+    assert.equal(faq.location_id, "loc");
+    assert.equal(faq.is_public, false);
+    assert.equal(faq.enabled, true);
+  }
+});
+
+test("failed FAQ removal preserves customer visibility and shows the error", async () => {
+  const { root, app, api, faqs } = setup();
   faqs.a.push({ id: "faq-one", question: "Parking?", answer: "Street parking.", location_id: null, enabled: true, is_public: true });
   await app.start();
   button(root, "FAQs").dispatch("click"); await app.task;
-  button(root, "Remove from customer answers").dispatch("click"); await app.task;
-  assert.deepEqual(writes.at(-1), { path: "/api/v1/businesses/a/faqs/faq-one", method: "PATCH", payload: { enabled: false } });
-  assert.equal(faqs.a[0].is_public, true);
-  assert.ok(button(root, "Restore to customer answers"));
-  button(root, "Restore to customer answers").dispatch("click"); await app.task;
-  assert.equal(writes.at(-1).payload.enabled, true);
-  assert.equal(faqs.a[0].is_public, true);
+  button(root, "Edit FAQ").dispatch("click");
+  const editForm = form(root, "Edit FAQ");
+  const confirmations = [];
+  app.confirm = message => { confirmations.push(message); return true; };
+  api.mutate = async () => { throw new ApiError(409, "Could not remove this answer. Please try again."); };
+  button(editForm, "Remove from customer answers").dispatch("click"); await app.task;
+  assert.equal(confirmations.length, 1);
+  assert.equal(app.faqs[0].enabled, true);
+  assert.equal(field(editForm, "FAQ enabled").checked, true);
+  assert.ok(button(editForm, "Remove from customer answers"));
+  assert.ok(root.textContent.includes("Parking?"));
+  assert.ok(root.textContent.includes("Street parking."));
+  assert.ok(root.textContent.includes("Could not remove this answer. Please try again."));
+  assert.equal(app.failed, true);
 });
 
 test("Team uses plain role labels and shows a copy-once invitation link", async () => {

@@ -135,11 +135,12 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
     if (path === "/api/v1/businesses/a/audit") { send(200, { items: audit, next_offset: null }); return; }
     if (path === "/api/v1/businesses/a/faqs" || path === "/api/v1/businesses/a/faqs/faq-one") {
       if (request.method === "GET") { send(200, faqs); return; }
-      if (request.headers["x-csrf-token"] !== String(token)) {
+      call.hasCsrfHeader = request.headers["x-csrf-token"] === String(token);
+      if (!call.hasCsrfHeader) {
         send(403, { detail: "A valid CSRF token is required for this request." }); return;
       }
       let text = ""; for await (const chunk of request) text += chunk;
-      const payload = JSON.parse(text);
+      const payload = call.payload = JSON.parse(text);
       const created = request.method === "POST";
       if (created) faqs.push({ id: "faq-one", ...payload });
       else Object.assign(faqs[0], payload);
@@ -287,16 +288,38 @@ test("native FAQ editing and audit navigation preserve CSRF, text rendering and 
   await page.getByRole("heading", { name: question, exact: true }).waitFor();
   assert.equal(await page.locator("article img").count(), 0);
   assert.equal(await page.evaluate(() => window.faqInjection), undefined);
-  await page.getByRole("button", { name: "Edit FAQ", exact: true }).click();
-  await page.getByLabel("Answer", { exact: true }).fill("Use the updated lot.");
-  await page.getByLabel("FAQ enabled", { exact: true }).uncheck();
-  await page.getByRole("button", { name: "Save FAQ", exact: true }).click();
+  await page.getByRole("button", { name: "Remove from customer answers", exact: true }).waitFor();
+  let listConfirmation = "";
+  page.once("dialog", async dialog => { listConfirmation = dialog.message(); await dialog.accept(); });
+  await page.getByRole("button", { name: "Remove from customer answers", exact: true }).click();
+  assert.equal(listConfirmation, "Remove this answer from customer answers? Customers will stop seeing it. The FAQ is kept and can be restored later.");
   await page.getByText("Business-wide · Disabled · Public", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Restore to customer answers", exact: true }).click();
+  await page.getByText("Business-wide · Enabled · Public", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Edit FAQ", exact: true }).click();
+  const editForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Edit FAQ", exact: true }) });
+  await editForm.getByRole("button", { name: "Remove from customer answers", exact: true }).waitFor();
+  await page.getByLabel("Answer", { exact: true }).fill("Use the updated lot.");
+  let confirmation = "";
+  page.once("dialog", async dialog => { confirmation = dialog.message(); await dialog.accept(); });
+  await editForm.getByRole("button", { name: "Remove from customer answers", exact: true }).click();
+  assert.equal(confirmation, "Remove this answer from customer answers? Customers will stop seeing it. The FAQ is kept and can be restored later.");
+  await page.getByText("Business-wide · Disabled · Public", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("FAQ enabled", { exact: true }).isChecked(), false);
+  await editForm.getByRole("button", { name: "Restore to customer answers", exact: true }).click();
+  await page.getByText("Business-wide · Enabled · Public", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("FAQ enabled", { exact: true }).isChecked(), true);
+  await editForm.getByRole("button", { name: "Remove from customer answers", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Save FAQ", exact: true }).click();
+  await page.getByText("Business-wide · Enabled · Public", { exact: true }).waitFor();
+  assert.ok(calls.some(call => call.path.endsWith("/faqs/faq-one") && call.method === "PATCH" && call.payload.enabled === false));
+  assert.ok(calls.some(call => call.path.endsWith("/faqs/faq-one") && call.method === "PATCH" && call.payload.enabled === true));
   await page.getByRole("button", { name: "Reload settings", exact: true }).click();
   await page.getByText("Use the updated lot.", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Audit History", exact: true }).click();
-  await page.getByRole("heading", { name: "admin.faq.updated", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "admin.faq.updated", exact: true }).first().waitFor();
   assert.equal(await page.locator("form").count(), 0);
+  assert.equal(await page.getByRole("heading", { name: "admin.faq.updated", exact: true }).count(), 5);
   assert.equal(await page.getByRole("heading", { name: "admin.faq.created", exact: true }).count(), 1);
   assert.ok(calls.some(call => call.path.endsWith("/faqs") && call.method === "POST" && call.status === 201));
   assert.ok(calls.some(call => call.path.endsWith("/faqs/faq-one") && call.method === "PATCH" && call.status === 200));

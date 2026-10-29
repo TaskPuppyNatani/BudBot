@@ -372,27 +372,38 @@ export class AdminApp {
   faqView() {
     const section = this.managementSection("FAQ management", "faq.read");
     if (!this.api.can(this.businessId, "faq.read") || !this.panelLoaded) return section;
-    section.append(this.node("p", "Only enabled, public entries reach customers. Matching location questions override business-wide answers. Disable an entry to remove it from customer lookup; records are retained."));
+    section.append(this.node("p", "Use “Remove from customer answers” to stop customers seeing an answer. Removed answers are kept and can be restored later. Matching location questions override business-wide answers."));
     if (!this.faqs.length) section.append(this.node("p", "No FAQs yet."));
+    const visibilityActions = new Map();
     for (const entry of this.faqs) {
       const card = this.node("article", "", { className: "card" });
       const scope = entry.location_id ? this.locations.find(item => item.id === entry.location_id)?.display_name || entry.location_id : "Business-wide";
-      card.append(this.node("h3", entry.question), this.node("p", entry.answer),
-        this.node("p", `${scope} · ${entry.enabled ? "Enabled" : "Disabled"} · ${entry.is_public ? "Public" : "Non-public"}`));
+      const summary = this.node("p", `${scope} · ${entry.enabled ? "Enabled" : "Disabled"} · ${entry.is_public ? "Public" : "Non-public"}`);
+      card.append(this.node("h3", entry.question), this.node("p", entry.answer), summary);
       card.append(this.button("Edit FAQ", () => {
         if (!this.discard()) return;
         this.editFaqId = entry.id; this.dirty = false; this.render();
       }, "faq.write"));
+      let visibilityButton;
+      const visibilityAction = { button: null, setEnabled: null };
       const setEnabled = async enabledValue => {
-        const verb = enabledValue ? "Restore this answer for customers?" : "Remove this answer from customer answers? Customers will stop seeing it. The FAQ is kept and can be restored later.";
-        if (!this.confirm.call(globalThis, verb)) return;
+        if (!enabledValue && !this.confirm.call(globalThis,
+          "Remove this answer from customer answers? Customers will stop seeing it. The FAQ is kept and can be restored later.")) return false;
         await this.api.mutate(this.path(`/faqs/${entry.id}`), "PATCH", { enabled: enabledValue });
-        this.editFaqId = null;
-        await this.loadManagementPanel(); this.render();
+        entry.enabled = enabledValue;
+        summary.textContent = `${scope} · ${entry.enabled ? "Enabled" : "Disabled"} · ${entry.is_public ? "Public" : "Non-public"}`;
+        if (this.editFaqId === entry.id && enabled) enabled.checked = enabledValue;
+        if (visibilityAction.button) visibilityAction.button.textContent = enabledValue ? "Remove from customer answers" : "Restore to customer answers";
       };
-      card.append(this.button(entry.enabled ? "Remove from customer answers" : "Restore to customer answers", () => this.run(
-        () => setEnabled(!entry.enabled), entry.enabled ? "Removed from customer answers. The FAQ is retained." : "Restored to customer answers.",
-      ), "faq.write"));
+      visibilityAction.setEnabled = setEnabled;
+      visibilityActions.set(entry.id, visibilityAction);
+      if (this.editFaqId !== entry.id) {
+        visibilityButton = this.button(entry.enabled ? "Remove from customer answers" : "Restore to customer answers", () => this.run(
+          () => setEnabled(!entry.enabled), entry.enabled ? "Removed from customer answers. The FAQ is retained." : "Answer restored. Customer visibility settings are unchanged.",
+        ), "faq.write");
+        visibilityAction.button = visibilityButton;
+        card.append(visibilityButton);
+      }
       section.append(card);
     }
     section.append(this.button("New FAQ", () => {
@@ -415,6 +426,14 @@ export class AdminApp {
       options: [["", "Business-wide"], ...this.locations.map(item => [item.id, `${item.display_name}${item.active ? "" : " (inactive)"}`])] });
     enabled = this.field(form, "FAQ enabled", entry?.enabled ?? true, { permission, type: "checkbox" });
     isPublic = this.field(form, "Public to customers", entry?.is_public ?? true, { permission, type: "checkbox" });
+    if (entry) {
+      const visibilityAction = visibilityActions.get(entry.id);
+      const actionButton = this.button(entry.enabled ? "Remove from customer answers" : "Restore to customer answers", () => this.run(
+        () => visibilityAction.setEnabled(!entry.enabled), entry.enabled ? "Removed from customer answers. The FAQ is retained." : "Answer restored. Customer visibility settings are unchanged.",
+      ), permission);
+      visibilityAction.button = actionButton;
+      form.append(actionButton);
+    }
     this.saveButton(form, permission, entry ? "Save FAQ" : "Create FAQ");
     section.append(form); return section;
   }
