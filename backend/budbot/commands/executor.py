@@ -30,6 +30,11 @@ _HIDDEN_COMPLIANCE_DENIALS = {
     "CAPABILITY_PROHIBITED",
 }
 
+_READ_ONLY_ADMIN_HELP = {
+    "bot-name": ("Show the assistant name.", ""),
+    "greeting": ("Show the greeting.", ""),
+}
+
 
 class CommandExecutor:
     def __init__(
@@ -192,13 +197,21 @@ class CommandExecutor:
                 continue
             available = await self._is_available(definition, context)
             if available or include_unavailable:
+                description = definition.description
+                argument_hint = definition.arguments.help_hint
+                if (
+                    context.scope is CommandScope.ADMIN
+                    and "assistant.write" not in context.permission_context.permissions
+                    and definition.name in _READ_ONLY_ADMIN_HELP
+                ):
+                    description, argument_hint = _READ_ONLY_ADMIN_HELP[definition.name]
                 metadata.append(
                     CommandMetadata(
                         name=definition.name,
-                        description=definition.description,
+                        description=description,
                         aliases=definition.aliases,
                         scope=definition.scope,
-                        argument_hint=definition.arguments.help_hint,
+                        argument_hint=argument_hint,
                         available=available,
                     )
                 )

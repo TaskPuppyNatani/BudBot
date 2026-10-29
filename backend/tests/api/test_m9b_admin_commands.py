@@ -297,8 +297,31 @@ async def test_help_and_actions_use_current_central_role_policy(admin, role):
     for name in ("provider", "test", "audit"):
         assert (name in names) == (role == "owner")
         assert (await command(f, "/" + name)).status_code == (200 if role == "owner" else 403)
+    help_response = await execute(f, "/help")
+    help_entries = {item["name"]: item for item in help_response["commands"]}
+    metadata_entries = {item["name"]: item for item in metadata.json()}
+    writable = role in {"owner", "admin"}
+    for name, read_description, editable_hint in (
+        ("bot-name", "Show the assistant name.", "/bot-name [name]"),
+        ("greeting", "Show the greeting.", "/greeting [text]"),
+    ):
+        if writable:
+            assert help_entries[name]["description"] == (
+                "Show the assistant name; change it if your account allows."
+                if name == "bot-name" else "Show the greeting; change it if your account allows."
+            )
+            assert help_entries[name]["argument_hint"] == editable_hint
+            assert metadata_entries[name]["argument_hint"] == editable_hint
+            assert editable_hint in help_response["output"]
+        else:
+            assert help_entries[name]["description"] == read_description
+            assert help_entries[name]["argument_hint"] == ""
+            assert metadata_entries[name]["description"] == read_description
+            assert metadata_entries[name]["argument_hint"] == ""
+            assert editable_hint not in help_response["output"]
     assert (await command(f, "/bot-name")).status_code == 200
     assert (await command(f, "/bot-name Updated")).status_code == (200 if role in {"owner", "admin"} else 403)
+    assert (await command(f, "/greeting Updated")).status_code == (200 if role in {"owner", "admin"} else 403)
     assert (await command(f, '/set-hours weekdays 9am-9pm; weekends closed', f.location)).status_code == (200 if role in {"owner", "admin", "manager"} else 403)
 
 
