@@ -90,6 +90,14 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
       const created = { invitation_id: "invite-one", email: call.payload.email, role: call.payload.role, expires_at: "2026-10-30T00:00:00Z" };
       invitations.push(created); send(201, { ...created, token: "native-invite-token" }); return;
     }
+    if (path.startsWith("/api/v1/businesses/a/invitations/") && request.method === "DELETE") {
+      call.hasCsrfHeader = request.headers["x-csrf-token"] === String(token);
+      if (!call.hasCsrfHeader) { send(403, { detail: "A valid CSRF token is required for this request." }); return; }
+      const invitationId = path.split("/").at(-1);
+      const index = invitations.findIndex(invite => invite.invitation_id === invitationId);
+      if (index < 0) { send(404, { detail: "This invite is no longer available." }); return; }
+      invitations.splice(index, 1); call.status = 204; response.writeHead(204).end(); return;
+    }
     if (path === "/api/v1/invitations/accept" && request.method === "POST") {
       call.hasAdminCookie = Boolean(request.headers.cookie?.includes("budbot_admin_session=fixture"));
       call.hasCsrfHeader = Boolean(request.headers["x-csrf-token"]);
@@ -402,7 +410,8 @@ test("command output contains long audit results with working scrollbars at desk
 });
 
 test("native Team flow creates a one-time link and warns about localhost reachability", async t => {
-  const { page, calls, origin, pageErrors } = await fixture(t);
+  const { context, page, calls, origin, pageErrors } = await fixture(t);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
   await signIn(page);
   await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
   await page.getByRole("button", { name: "Team", exact: true }).click();
@@ -416,6 +425,19 @@ test("native Team flow creates a one-time link and warns about localhost reachab
   assert.equal(await link.inputValue(), `${origin}/admin/activate.html#native-invite-token`);
   await page.getByRole("alert").getByText("This address is only available on this computer.").waitFor();
   assert.ok(calls.some(call => call.path === "/api/v1/businesses/a/invitations" && call.method === "POST" && call.payload.email === "new.person@example.test"));
+  await page.getByRole("heading", { name: "Pending invitations", exact: true }).waitFor();
+  await page.getByText("new.person@example.test", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Copy link", exact: true }).click();
+  await page.getByText("Link copied.", { exact: true }).last().waitFor();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${origin}/admin/activate.html#native-invite-token`);
+  let confirmation = "";
+  page.once("dialog", async dialog => { confirmation = dialog.message(); await dialog.accept(); });
+  await page.getByRole("button", { name: "Revoke invite", exact: true }).click();
+  assert.equal(confirmation, "Revoke the invitation for new.person@example.test?");
+  await page.getByText("No pending invitations.", { exact: true }).waitFor();
+  const revokeCall = calls.find(call => call.path === "/api/v1/businesses/a/invitations/invite-one" && call.method === "DELETE");
+  assert.ok(revokeCall); assert.equal(revokeCall.hasCsrfHeader, true); assert.equal(revokeCall.status, 204);
+  await page.getByText("Invitation revoked.", { exact: true }).waitFor();
   assert.deepEqual(pageErrors, []);
 });
 

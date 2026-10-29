@@ -62,6 +62,12 @@ function setup(permissions = ["business.read", "business.write", "location.write
         return { invitation_id: "invite-one", email: payload.email.toLowerCase(), role: payload.role,
           expires_at: "2026-10-30T00:00:00Z", token: "secret-one-time-token" };
       }
+      if (path.includes("/invitations/") && method === "DELETE") {
+        const invitations = team[path.split("/")[4]].invitations;
+        const index = invitations.findIndex(invite => invite.invitation_id === path.split("/").at(-1));
+        if (index >= 0) invitations.splice(index, 1);
+        return {};
+      }
       if (path.includes("/members/")) {
         const member = team[path.split("/")[4]].members[0];
         if (method === "PATCH") member.role = payload.role;
@@ -341,12 +347,73 @@ test("Team uses plain role labels and shows a copy-once invitation link", async 
   });
   assert.equal(field(root, "One-time invite link").value, "https://budbot.test/admin/activate.html#secret-one-time-token");
   assert.ok(root.textContent.includes("Invitation expires"));
-  button(root, "Copy link").dispatch("click"); await new Promise(resolve => setImmediate(resolve));
+  button(root, "Copy link").dispatch("click"); await app.task;
   assert.deepEqual(copied, ["https://budbot.test/admin/activate.html#secret-one-time-token"]);
+  assert.ok(all(root).some(node => node.tagName === "p" && node.textContent === "Link copied."));
   button(root, "Business").dispatch("click");
   assert.equal(field(root, "One-time invite link"), undefined);
   button(root, "Team").dispatch("click"); await app.task;
   assert.equal(field(root, "One-time invite link"), undefined);
+});
+
+test("invitation copy failure shows accessible manual-copy guidance", async () => {
+  const { root, app } = setup(); await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  field(root, "Email").value = "new.person@example.test";
+  field(root, "Role").value = "manager";
+  form(root, "Add a person").dispatch("submit"); await app.task;
+  app.document.defaultView.navigator.clipboard.writeText = async () => { throw new Error("synthetic clipboard failure"); };
+  button(root, "Copy link").dispatch("click"); await app.task;
+  assert.ok(all(root).some(node => node.tagName === "p"
+    && node.textContent === "Couldn’t copy the link. Select it and copy it manually."
+    && node.attributes.role === "alert" && node.attributes["data-error"] === "true"));
+  assert.equal(app.failed, true);
+});
+
+test("Team clearly lists pending invitations and confirms then removes a revoked invite", async () => {
+  const { root, app, api, writes, team } = setup();
+  team.a.invitations.push({ invitation_id: "private-invitation-id", email: "pending.person@example.test", role: "manager",
+    expires_at: "2026-10-30T00:00:00Z" });
+  const confirmations = [];
+  app.confirm = message => { confirmations.push(message); return true; };
+  await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  assert.ok(root.textContent.includes("Pending invitations"));
+  assert.ok(root.textContent.includes("pending.person@example.test"));
+  assert.ok(root.textContent.includes("Manager — view business information and manage locations and hours"));
+  assert.equal(root.textContent.includes("private-invitation-id"), false);
+  assert.equal(root.textContent.includes("secret-one-time-token"), false);
+  button(root, "Revoke invite").dispatch("click"); await app.task;
+  assert.deepEqual(confirmations, ["Revoke the invitation for pending.person@example.test?"]);
+  assert.ok(writes.some(write => write.path === "/api/v1/businesses/a/invitations/private-invitation-id" && write.method === "DELETE"));
+  assert.equal(team.a.invitations.length, 0);
+  assert.ok(root.textContent.includes("No pending invitations."));
+  assert.ok(root.textContent.includes("Invitation revoked."));
+});
+
+test("cancelled or failed invite revocation remains visible and reports the problem", async () => {
+  const { root, app, api, writes, team } = setup();
+  team.a.invitations.push({ invitation_id: "private-invitation-id", email: "pending.person@example.test", role: "viewer",
+    expires_at: "2026-10-30T00:00:00Z" });
+  await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  app.confirm = () => false;
+  button(root, "Revoke invite").dispatch("click"); await app.task;
+  assert.equal(writes.some(write => write.method === "DELETE"), false);
+  assert.equal(team.a.invitations.length, 1);
+
+  app.confirm = () => true;
+  const mutate = api.mutate;
+  api.mutate = async (path, method, payload) => {
+    if (path.includes("/invitations/") && method === "DELETE")
+      throw new Error("Could not revoke the invite. Check your connection and try again.");
+    return mutate(path, method, payload);
+  };
+  button(root, "Revoke invite").dispatch("click"); await app.task;
+  assert.equal(team.a.invitations.length, 1);
+  assert.ok(root.textContent.includes("Could not revoke the invite. Check your connection and try again."));
+  assert.equal(app.failed, true);
+  assert.equal(button(root, "Revoke invite").disabled, false);
 });
 
 test("demoting another owner confirms that owner's access change", async () => {

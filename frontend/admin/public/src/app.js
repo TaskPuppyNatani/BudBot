@@ -456,16 +456,20 @@ export class AdminApp {
       section.append(card);
     }
     if (!this.team.members.length) section.append(this.node("p", "No team members are listed."));
+    const invitationList = this.node("section", "", { "aria-label": "Pending invitations" });
+    invitationList.append(this.node("h3", "Pending invitations"));
+    if (!this.team.invitations.length) invitationList.append(this.node("p", "No pending invitations."));
     for (const invite of this.team.invitations) {
       const card = this.node("article", "", { className: "card" });
       card.append(this.node("h3", invite.email), this.node("p", `${labels[invite.role] || "Business access"} · Expires ${new Date(invite.expires_at).toLocaleString()}`));
-      card.append(this.button("Revoke invitation", () => this.run(async () => {
+      card.append(this.button("Revoke invite", () => this.run(async () => {
         if (!this.confirm.call(globalThis, `Revoke the invitation for ${invite.email}?`)) return false;
         await this.api.mutate(this.path(`/invitations/${invite.invitation_id}`), "DELETE");
         await this.loadManagementPanel(); this.render();
       }, "Invitation revoked.", "danger"), "membership.manage"));
-      section.append(card);
+      invitationList.append(card);
     }
+    section.append(invitationList);
     const form = this.form("Add a person", "membership.manage", async () => {
       const created = await this.api.mutate(this.path("/invitations"), "POST", { email: email.value.trim(), role: role.value });
       const origin = this.document.defaultView?.location?.origin || globalThis.location?.origin || "http://localhost";
@@ -490,15 +494,25 @@ export class AdminApp {
       else if (new URL(this.inviteLink).protocol !== "https:")
         card.append(this.node("p", "This address does not use a secure connection. Use HTTPS before sharing an invitation link between devices.", { role: "alert" }));
       const linkField = this.field(card, "One-time invite link", this.inviteLink, { trackChanges: false }); linkField.readOnly = true;
+      const copyFeedback = this.node("p", "", { className: "status", role: "status", "aria-live": "polite" });
       card.append(this.button("Copy link", async () => {
         try {
           await this.document.defaultView.navigator.clipboard.writeText(this.inviteLink);
-          this.message = "Invitation link copied. Share it privately."; this.failed = false;
+          copyFeedback.textContent = "Link copied.";
+          copyFeedback.setAttribute("data-error", "false");
+          copyFeedback.setAttribute("role", "status");
+          copyFeedback.setAttribute("aria-live", "polite");
+          this.message = "Link copied."; this.failed = false;
         } catch {
-          this.message = "Select and copy the invitation link, then share it privately."; this.failed = false;
+          copyFeedback.textContent = "Couldn’t copy the link. Select it and copy it manually.";
+          copyFeedback.setAttribute("data-error", "true");
+          copyFeedback.setAttribute("role", "alert");
+          copyFeedback.setAttribute("aria-live", "assertive");
+          this.message = "Couldn’t copy the link. Select it and copy it manually."; this.failed = true;
         }
         this.notice();
       }));
+      card.append(copyFeedback);
       section.append(card);
     }
     return section;
