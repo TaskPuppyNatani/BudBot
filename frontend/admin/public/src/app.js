@@ -144,17 +144,19 @@ export class AdminApp {
     this.providerProfile = null;
     this.providerTest = null; this.providerTesting = false; this.providerConnectionPanel = null;
     this.faqs = []; this.editFaqId = null; this.auditPage = null;
+    this.team = null; this.inviteLink = null; this.inviteExpiresAt = null;
     this.auditOffset = 0; this.panelError = ""; this.panelLoaded = false;
   }
   async loadManagementPanel(offset = 0) {
     const id = this.businessId;
-    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : this.tab === "AI Provider" ? "provider.read" : this.tab === "Commands" ? "business.read" : null;
+    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : this.tab === "AI Provider" ? "provider.read" : this.tab === "Commands" ? "business.read" : this.tab === "Team" ? "membership.manage" : null;
     this.panelError = ""; this.panelLoaded = false;
     if (!permission || !this.api.can(id, permission)) return;
     try {
-      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : this.tab === "Commands" ? "/commands" : `/audit?limit=25&offset=${offset}`));
+      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : this.tab === "Commands" ? "/commands" : this.tab === "Team" ? "/members" : `/audit?limit=25&offset=${offset}`));
       if (id !== this.businessId) return;
       if (this.tab === "FAQs") this.faqs = result;
+      else if (this.tab === "Team") this.team = result;
       else if (this.tab === "Commands") this.adminCommands = result;
       else if (this.tab === "AI Provider") {
         if (JSON.stringify(this.providerProfile) !== JSON.stringify(result)) this.providerTest = null;
@@ -181,6 +183,7 @@ export class AdminApp {
     this.controls = []; this.businessSelect = null; this.locationSelect = null;
     const form = this.node("form", "", { className: "card login" });
     form.append(this.node("h1", "Sign in to BudBot"), this.node("p", "Use your owner or authorized business account. Browser sign-in is separate from Control Center."));
+    form.append(this.node("p", "First time setting up BudBot? Create the first owner in the backend terminal with: python -m budbot.admin setup-owner. In the development Docker stack, run: docker compose -f docker-compose.dev.yml --project-name budbot exec backend python -m budbot.admin setup-owner. Then sign in here." , { className: "muted" }));
     const email = this.field(form, "Email", "", { type: "email", required: true, maxLength: 320 });
     email.autocomplete = "username";
     const password = this.field(form, "Password", "", { type: "password", required: true, maxLength: 1024 });
@@ -240,12 +243,16 @@ export class AdminApp {
     }
     const nav = this.node("nav", "", { "aria-label": "Management sections" });
     const sections = ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History", "AI Provider", "Commands"];
+    if (this.api.can(this.businessId, "membership.manage")) sections.push("Team");
     if (this.runtime?.available && this.api.can(this.businessId, "runtime.shutdown")) sections.push("System");
     for (const title of sections) {
       const button = this.button(title, () => {
         if (!this.discard()) return;
+        if (this.tab === "Team" && title !== "Team") {
+          this.inviteLink = null; this.inviteExpiresAt = null;
+        }
         this.dirty = false; this.tab = title;
-        if (["FAQs", "Audit History", "AI Provider", "Commands"].includes(title)) return this.run(async () => {
+        if (["FAQs", "Audit History", "AI Provider", "Commands", "Team"].includes(title)) return this.run(async () => {
           this.resetManagementData(); this.render();
           await this.loadManagementPanel(); this.render();
         });
@@ -269,9 +276,9 @@ export class AdminApp {
       });
       fragment.append(selection);
     }
-    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView", Commands: "commandsView", System: "runtimeView" };
+    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView", Commands: "commandsView", Team: "teamView", System: "runtimeView" };
     const panel = this[builders[this.tab]]();
-    this.managementPanel = ["FAQs", "Audit History", "AI Provider", "Commands"].includes(this.tab) ? panel : null;
+    this.managementPanel = ["FAQs", "Audit History", "AI Provider", "Commands", "Team"].includes(this.tab) ? panel : null;
     fragment.append(panel);
     this.root.replaceChildren(fragment); this.updateControls(); this.notice();
   }
@@ -376,6 +383,16 @@ export class AdminApp {
         if (!this.discard()) return;
         this.editFaqId = entry.id; this.dirty = false; this.render();
       }, "faq.write"));
+      const setEnabled = async enabledValue => {
+        const verb = enabledValue ? "Restore this answer for customers?" : "Remove this answer from customer answers? Customers will stop seeing it. The FAQ is kept and can be restored later.";
+        if (!this.confirm.call(globalThis, verb)) return;
+        await this.api.mutate(this.path(`/faqs/${entry.id}`), "PATCH", { enabled: enabledValue });
+        this.editFaqId = null;
+        await this.loadManagementPanel(); this.render();
+      };
+      card.append(this.button(entry.enabled ? "Remove from customer answers" : "Restore to customer answers", () => this.run(
+        () => setEnabled(!entry.enabled), entry.enabled ? "Removed from customer answers. The FAQ is retained." : "Restored to customer answers.",
+      ), "faq.write"));
       section.append(card);
     }
     section.append(this.button("New FAQ", () => {
@@ -400,6 +417,104 @@ export class AdminApp {
     isPublic = this.field(form, "Public to customers", entry?.is_public ?? true, { permission, type: "checkbox" });
     this.saveButton(form, permission, entry ? "Save FAQ" : "Create FAQ");
     section.append(form); return section;
+  }
+  teamView() {
+    const section = this.managementSection("Team", "membership.manage");
+    if (!this.api.can(this.businessId, "membership.manage") || !this.panelLoaded || !this.team) return section;
+    section.append(this.node("p", "Choose who can use this business. Each person uses their own account. Invitation links work only at the BudBot address shown here; the recipient may need to be on the same network. Share the link privately over a secure connection.", { className: "muted" }));
+    const labels = {
+      owner: "Owner — full control, including Team access",
+      admin: "Admin — manage most settings, but not Team, audit history, or AI provider controls",
+      manager: "Manager — view business information and manage locations and hours",
+      viewer: "Viewer — view business information",
+    };
+    const roleOptions = Object.entries(labels);
+    for (const member of this.team.members) {
+      const card = this.node("article", "", { className: "card" });
+      card.append(this.node("h3", member.display_name || member.email), this.node("p", member.email),
+        this.node("p", `${labels[member.role] || "Business access"}${member.active ? "" : " · Account unavailable"}`));
+      if (!member.active) { section.append(card); continue; }
+      const role = this.field(card, "Access", member.role, { options: roleOptions, trackChanges: false });
+      const self = member.user_id === this.api.session?.user?.id;
+      card.append(this.button("Save role", () => this.run(async () => {
+        if (role.value !== "owner" && member.role === "owner") {
+          const question = self
+            ? "Change your access? You will lose Team management."
+            : `Change ${member.display_name || "this owner"}'s access? They will lose Team management and invitations they created will be revoked.`;
+          if (!this.confirm.call(globalThis, question)) return false;
+        }
+        await this.api.mutate(this.path(`/members/${member.membership_id}`), "PATCH", { role: role.value });
+        await this.refreshTeamAfterSelfChange(self, "Role updated.");
+      }, "Role updated.", "", () => role.value !== member.role), "membership.manage"));
+      card.append(this.button("Remove from this business", () => this.run(async () => {
+        if (!this.confirm.call(globalThis, self
+          ? "Remove your access to this business? You may need to sign in again to manage another business."
+          : `Remove ${member.display_name || member.email} from this business? Their other BudBot access will remain.`)) return false;
+        await this.api.mutate(this.path(`/members/${member.membership_id}`), "DELETE");
+        await this.refreshTeamAfterSelfChange(self, "Member removed from this business.");
+      }, "Member removed from this business.", "danger"), "membership.manage"));
+      section.append(card);
+    }
+    if (!this.team.members.length) section.append(this.node("p", "No team members are listed."));
+    for (const invite of this.team.invitations) {
+      const card = this.node("article", "", { className: "card" });
+      card.append(this.node("h3", invite.email), this.node("p", `${labels[invite.role] || "Business access"} · Expires ${new Date(invite.expires_at).toLocaleString()}`));
+      card.append(this.button("Revoke invitation", () => this.run(async () => {
+        if (!this.confirm.call(globalThis, `Revoke the invitation for ${invite.email}?`)) return false;
+        await this.api.mutate(this.path(`/invitations/${invite.invitation_id}`), "DELETE");
+        await this.loadManagementPanel(); this.render();
+      }, "Invitation revoked.", "danger"), "membership.manage"));
+      section.append(card);
+    }
+    const form = this.form("Add a person", "membership.manage", async () => {
+      const created = await this.api.mutate(this.path("/invitations"), "POST", { email: email.value.trim(), role: role.value });
+      const origin = this.document.defaultView?.location?.origin || globalThis.location?.origin || "http://localhost";
+      const link = new URL("/admin/activate.html", origin); link.hash = created.token;
+      this.inviteLink = link.href; this.inviteExpiresAt = created.expires_at;
+      await this.loadManagementPanel(); this.render();
+    });
+    const email = this.field(form, "Email", "", { type: "email", required: true, maxLength: 320 });
+    const role = this.field(form, "Role", "viewer", { options: roleOptions, trackChanges: false });
+    form.append(this.node("p", "The person sets their own password. BudBot will show a link once; copy it and send it privately. It expires after a short time." , { className: "muted" }));
+    this.saveButton(form, "membership.manage", "Create invite");
+    section.append(form);
+    if (this.inviteLink) {
+      const card = this.node("section", "", { className: "card", role: "status" });
+      card.append(this.node("h3", "Invitation ready"), this.node("p", "Copy this link now and share it privately. BudBot will not show it again after you leave this page."),
+        this.node("p", `Invitation expires ${new Date(this.inviteExpiresAt).toLocaleString()}.`));
+      const inviteHost = new URL(this.inviteLink).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+      const localOnly = inviteHost === "localhost" || inviteHost.endsWith(".localhost") || inviteHost === "::1"
+        || inviteHost === "0.0.0.0" || inviteHost === "::" || inviteHost.startsWith("127.");
+      if (localOnly)
+        card.append(this.node("p", "This address is only available on this computer. Use a BudBot address the recipient can reach before sharing the link.", { role: "alert" }));
+      else if (new URL(this.inviteLink).protocol !== "https:")
+        card.append(this.node("p", "This address does not use a secure connection. Use HTTPS before sharing an invitation link between devices.", { role: "alert" }));
+      const linkField = this.field(card, "One-time invite link", this.inviteLink, { trackChanges: false }); linkField.readOnly = true;
+      card.append(this.button("Copy link", async () => {
+        try {
+          await this.document.defaultView.navigator.clipboard.writeText(this.inviteLink);
+          this.message = "Invitation link copied. Share it privately."; this.failed = false;
+        } catch {
+          this.message = "Select and copy the invitation link, then share it privately."; this.failed = false;
+        }
+        this.notice();
+      }));
+      section.append(card);
+    }
+    return section;
+  }
+  async refreshTeamAfterSelfChange(self, message) {
+    await this.api.current();
+    const selected = this.api.session.businesses.find(item => item.business_id === this.businessId);
+    if (self && !selected?.permissions?.includes("membership.manage")) {
+      this.businessId = selected ? this.businessId : this.api.session.businesses[0]?.business_id || null;
+      this.tab = "Business";
+      if (this.businessId) await this.loadBusiness(this.businessId);
+      this.render();
+    } else {
+      await this.loadManagementPanel(); this.render();
+    }
+    this.message = message; this.failed = false; this.notice();
   }
   auditView() {
     const section = this.managementSection("Audit History", "audit.read");

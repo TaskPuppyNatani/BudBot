@@ -73,6 +73,13 @@ async def test_faq_crud_states_and_metadata_only_audit(faq_admin):
     assert "Private question marker" not in json.dumps(history)
     assert "Private answer marker" not in json.dumps(history)
     assert "Updated private answer" not in json.dumps(history)
+    assert (await f.client.patch(f.base + f"/faqs/{entry['id']}", json={"enabled": False})).status_code == 200
+    assert (await f.client.patch(f.base + f"/faqs/{entry['id']}", json={"enabled": True})).status_code == 200
+    history = (await f.client.get(f.base + "/audit")).json()["items"]
+    assert {event["event_type"] for event in history} >= {
+        "admin.faq.removed_from_customer_answers",
+        "admin.faq.restored_to_customer_answers",
+    }
     # Disable/re-enable is the removal contract; no destructive route exists.
     assert (await f.client.delete(f.base + f"/faqs/{entry['id']}")).status_code == 405
 

@@ -67,7 +67,13 @@ class AdminActions:
 
     async def update_faq(self, faq_id: UUID, payload: FAQUpdate):
         entry = await KnowledgeService(self.session, self.tenant).update_admin_faq(faq_id, payload)
-        return await self._publish_faq(entry, "admin.faq.updated", payload.model_fields_set)
+        event_type = "admin.faq.updated"
+        if payload.model_fields_set == {"enabled"}:
+            event_type = (
+                "admin.faq.restored_to_customer_answers"
+                if payload.enabled else "admin.faq.removed_from_customer_answers"
+            )
+        return await self._publish_faq(entry, event_type, payload.model_fields_set)
 
     async def test_provider(self, settings, providers, harnesses):
         result = await ProviderService(self.session, self.tenant, settings).test_connection(providers, harnesses)

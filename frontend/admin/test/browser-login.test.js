@@ -9,14 +9,16 @@ import { createRequire } from "node:module";
 const { chromium } = createRequire(import.meta.url)("playwright");
 const publicRoot = new URL("../public/", import.meta.url);
 const widgetRoot = new URL("../../widget/", import.meta.url);
-const account = token => ({ csrf_token: token, user: { email: "owner@example.test" }, businesses: [
+const account = token => ({ csrf_token: token, user: { id: "owner-id", email: "owner@example.test" }, businesses: [
   { business_id: "a", display_name: "Fixture business", role: "owner",
-    permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read", "provider.read", "provider.write"] },
+    permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read", "provider.read", "provider.write", "membership.manage"] },
 ] });
 
 async function fixture(t, { commandOutput = () => "<script>safe command output</script>" } = {}) {
   const calls = []; const widgetNavigations = []; let token = 0;
   const faqs = []; const audit = [];
+  const members = [{ membership_id: "member-one", user_id: "owner-id", display_name: "Store Owner", email: "owner@example.test", role: "owner", active: true }];
+  const invitations = [];
   const provider = { configured: true, provider: "openai_compatible", model: "operator-model",
     base_url: "http://compatible.example/v1", enabled: true, tool_calling: true,
     credential_configured: false, runtime_status: "ready", runtime_code: null };
@@ -30,6 +32,7 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
     }
     if (path.startsWith("/admin/")) {
       const files = { "/admin/": "index.html", "/admin/styles.css": "styles.css",
+        "/admin/activate.html": "activate.html", "/admin/src/activate.js": "src/activate.js",
         "/admin/src/app.js": "src/app.js", "/admin/src/client.js": "src/client.js", "/admin/src/forms.js": "src/forms.js", "/admin/src/provider.js": "src/provider.js" };
       if (!files[path]) { response.writeHead(404).end(); return; }
       response.writeHead(200, { "Content-Type": path.endsWith(".js") ? "text/javascript" : path.endsWith(".css") ? "text/css" : "text/html",
@@ -42,6 +45,26 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
       response.writeHead(status, { "Content-Type": "application/json", ...headers });
       response.end(JSON.stringify(body));
     };
+    if (path === "/api/v1/invitations/inspect") {
+      let text = ""; for await (const chunk of request) text += chunk;
+      call.payload = JSON.parse(text);
+      if (request.headers.origin !== `http://${request.headers.host}`) { send(403, { detail: "This invitation request must come from BudBot." }); return; }
+      send(call.payload.token === "native-invite-token" ? 200 : 404,
+        call.payload.token === "native-invite-token" ? { email: "owner@example.test", business_name: "Fixture business", role: "viewer", expires_at: "2026-10-30T00:00:00Z" } : { detail: "This invitation can’t be used. Ask the business owner for a new link." }); return;
+    }
+    if (path === "/api/v1/invitations/accept/new") {
+      let text = ""; for await (const chunk of request) text += chunk; call.payload = JSON.parse(text);
+      if (request.headers.origin !== `http://${request.headers.host}`) { send(403, { detail: "This invitation request must come from BudBot." }); return; }
+      send(call.payload.token === "native-invite-token" ? 200 : 404, { message: "Your account is ready." }); return;
+    }
+    if (path === "/api/v1/auth/login" && request.method === "POST") {
+      let text = ""; for await (const chunk of request) text += chunk;
+      const input = JSON.parse(text);
+      if (input.email !== "owner@example.test" || input.password !== "synthetic owner passphrase") {
+        send(401, { detail: "Invalid email or password." }); return;
+      }
+      send(200, account(String(++token)), { "Set-Cookie": "budbot_admin_session=fixture; Path=/; HttpOnly; SameSite=Lax" }); return;
+    }
     if (path === "/api/v1/sessions" || path === "/api/v1/sessions/customer-fixture/widget") {
       call.hasAdminCookie = Boolean(request.headers.cookie?.includes("budbot_admin_session"));
       call.hasCsrfHeader = Boolean(request.headers["x-csrf-token"]);
@@ -54,18 +77,27 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
       send(200, { business: { display_name: "Fixture business" }, assistant: { display_name: "Fixture assistant" },
         compliance: { requires_age_gate: false }, locations: [{ id: "one", display_name: "Main" }, { id: "two", display_name: "Second" }] }); return;
     }
-    if (path === "/api/v1/auth/login" && request.method === "POST") {
-      let text = ""; for await (const chunk of request) text += chunk;
-      const input = JSON.parse(text);
-      if (input.email !== "owner@example.test" || input.password !== "synthetic owner passphrase") {
-        send(401, { detail: "Invalid email or password." }); return;
-      }
-      send(200, account(String(++token)), { "Set-Cookie": "budbot_admin_session=fixture; Path=/; HttpOnly; SameSite=Lax" }); return;
-    }
     if (!request.headers.cookie?.includes("budbot_admin_session=fixture")) {
       send(401, { detail: "Authentication is required." }); return;
     }
     if (path === "/api/v1/auth/me") { send(200, account(String(++token))); return; }
+    if (path === "/api/v1/businesses/a/members" && request.method === "GET") {
+      send(200, { members, invitations }); return;
+    }
+    if (path === "/api/v1/businesses/a/invitations" && request.method === "POST") {
+      if (request.headers["x-csrf-token"] !== String(token)) { send(403, { detail: "A valid CSRF token is required for this request." }); return; }
+      let text = ""; for await (const chunk of request) text += chunk; call.payload = JSON.parse(text);
+      const created = { invitation_id: "invite-one", email: call.payload.email, role: call.payload.role, expires_at: "2026-10-30T00:00:00Z" };
+      invitations.push(created); send(201, { ...created, token: "native-invite-token" }); return;
+    }
+    if (path === "/api/v1/invitations/accept" && request.method === "POST") {
+      call.hasAdminCookie = Boolean(request.headers.cookie?.includes("budbot_admin_session=fixture"));
+      call.hasCsrfHeader = Boolean(request.headers["x-csrf-token"]);
+      if (!request.headers.cookie?.includes("budbot_admin_session=fixture") || request.headers["x-csrf-token"] !== String(token)) { send(403, { detail: "A valid CSRF token is required for this request." }); return; }
+      let text = ""; for await (const chunk of request) text += chunk; call.payload = JSON.parse(text);
+      if (request.headers.origin !== `http://${request.headers.host}`) { send(403, { detail: "This invitation request must come from BudBot." }); return; }
+      send(call.payload.token === "native-invite-token" ? 204 : 404, null); return;
+    }
     if (path === "/api/v1/businesses/a/commands") {
       send(200, [{ name: "help", description: "Help", argument_hint: "" }, { name: "preview", description: "Customer preview", argument_hint: "" }]); return;
     }
@@ -366,5 +398,56 @@ test("command output contains long audit results with working scrollbars at desk
   await page.getByRole("button", { name: "Business", exact: true }).click();
   await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Save changes", exact: true }).isEnabled(), true);
+  assert.deepEqual(pageErrors, []);
+});
+
+test("native Team flow creates a one-time link and warns about localhost reachability", async t => {
+  const { page, calls, origin, pageErrors } = await fixture(t);
+  await signIn(page);
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Team", exact: true }).click();
+  await page.getByRole("heading", { name: "Add a person", exact: true }).waitFor();
+  await page.getByLabel("Email", { exact: true }).fill("new.person@example.test");
+  await page.locator("form").filter({ has: page.getByRole("heading", { name: "Add a person", exact: true }) })
+    .getByRole("combobox").selectOption("manager");
+  await page.getByRole("button", { name: "Create invite", exact: true }).click();
+  const link = page.getByLabel("One-time invite link", { exact: true });
+  await link.waitFor();
+  assert.equal(await link.inputValue(), `${origin}/admin/activate.html#native-invite-token`);
+  await page.getByRole("alert").getByText("This address is only available on this computer.").waitFor();
+  assert.ok(calls.some(call => call.path === "/api/v1/businesses/a/invitations" && call.method === "POST" && call.payload.email === "new.person@example.test"));
+  assert.deepEqual(pageErrors, []);
+});
+
+test("activation consumes the fragment locally and accepts a new account", async t => {
+  const { page, calls, origin, pageErrors } = await fixture(t);
+  await page.goto(`${origin}/admin/activate.html#native-invite-token`);
+  await page.getByRole("heading", { name: "Join a BudBot business", exact: true }).waitFor();
+  assert.equal(new URL(page.url()).hash, "");
+  await page.getByLabel("Your name", { exact: true }).fill("New Teammate");
+  await page.getByLabel("Choose a password (at least 12 characters)", { exact: true }).fill("a-safe-new-passphrase");
+  await page.getByLabel("Confirm password", { exact: true }).fill("a-safe-new-passphrase");
+  await page.getByRole("button", { name: "Create account and join", exact: true }).click();
+  await page.getByText("Your account is ready. Go to the BudBot sign-in page to continue.", { exact: true }).waitFor();
+  const inspect = calls.find(call => call.path === "/api/v1/invitations/inspect");
+  const accepted = calls.find(call => call.path === "/api/v1/invitations/accept/new");
+  assert.equal(inspect.payload.token, "native-invite-token");
+  assert.equal(accepted.payload.token, "native-invite-token");
+  assert.ok(calls.every(call => !call.path.includes("native-invite-token")));
+  assert.deepEqual(pageErrors, []);
+});
+
+test("activation requires the invited existing account to sign in and explicitly accept", async t => {
+  const { page, calls, origin, pageErrors } = await fixture(t);
+  await page.goto(`${origin}/admin/activate.html#native-invite-token`);
+  await page.getByRole("heading", { name: "Join a BudBot business", exact: true }).waitFor();
+  await page.getByLabel("Email", { exact: true }).fill("owner@example.test");
+  await page.getByLabel("Password", { exact: true }).fill("synthetic owner passphrase");
+  await page.getByRole("button", { name: "Sign in and accept invitation", exact: true }).click();
+  await page.getByText("You’ve joined the business. Open the BudBot dashboard to continue.", { exact: true }).waitFor();
+  const accepted = calls.find(call => call.path === "/api/v1/invitations/accept");
+  assert.equal(accepted.payload.token, "native-invite-token");
+  assert.ok(accepted.hasCsrfHeader);
+  assert.ok(calls.every(call => !call.path.includes("native-invite-token")));
   assert.deepEqual(pageErrors, []);
 });

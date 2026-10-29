@@ -25,6 +25,7 @@ from budbot.api.routes.knowledge import router as knowledge_router
 from budbot.api.routes.local_branding import router as local_branding_router
 from budbot.api.routes.local_runtime import router as local_runtime_router
 from budbot.api.routes.sessions import router as sessions_router
+from budbot.api.routes.team import router as team_router
 from budbot.core.config import Settings, get_settings
 from budbot.database.session import Database
 from budbot.providers.ai.harness_registry import build_ai_harness_registry
@@ -71,6 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(provider_router)
     application.include_router(audit_router)
     application.include_router(knowledge_router)
+    application.include_router(team_router)
     application.include_router(branding_router)
     application.include_router(businesses_router)
     application.include_router(locations_router)
@@ -93,11 +95,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.middleware("http")
     async def admin_response_headers(request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith(("/api/v1/auth/", "/api/v1/businesses")):
+        if request.url.path.startswith(("/api/v1/auth/", "/api/v1/businesses", "/api/v1/invitations/")):
             response.headers["Cache-Control"] = "no-store"
         if request.url.path == "/admin" or request.url.path.startswith("/admin/"):
             response.headers["Cache-Control"] = "no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Referrer-Policy"] = "no-referrer"
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; script-src 'self'; style-src 'self'; "
                 "img-src 'self' blob:; object-src 'none'; base-uri 'none'; "

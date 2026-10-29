@@ -21,21 +21,26 @@ const all = node => [node, ...node.children.flatMap(all)];
 const button = (root, text) => all(root).find(node => node.tagName === "button" && node.textContent === text);
 const field = (root, text) => all(root).find(node => node.tagName === "label" && node.children[0]?.textContent === text)?.children[1];
 const form = (root, title) => all(root).find(node => node.tagName === "form" && node.children[0]?.textContent === title);
-function setup(permissions = ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read"]) {
+function setup(permissions = ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read", "membership.manage"]) {
+  const copied = [];
   const document = { createElement: tag => new Element(tag, document) };
+  document.defaultView = { location: { origin: "https://budbot.test" }, navigator: { clipboard: { writeText: async value => copied.push(value) } } };
   const root = document.createElement("main"); const writes = []; const opened = [];
-  const account = { user: { email: "owner@example.test" }, businesses: [{ business_id: "a", display_name: "<script>business</script>", role: "owner", permissions }, { business_id: "b", display_name: "Second business", role: "viewer", permissions: ["business.read", "faq.read"] }] };
+  const account = { user: { id: "owner-id", email: "owner@example.test" }, businesses: [{ business_id: "a", display_name: "<script>business</script>", role: "owner", permissions }, { business_id: "b", display_name: "Second business", role: "viewer", permissions: ["business.read", "faq.read"] }] };
   const business = { id: "a", display_name: "<script>business</script>", industry: "general_retail", active: true, default_timezone: "UTC", products_enabled: true, promotions_enabled: true };
   const assistant = { display_name: "Assistant", greeting: "Hello", fallback_message: "Ask staff", enabled: true };
   const location = { id: "loc", display_name: "Main", active: true, hours: [], timezone: "UTC" };
   const faqs = { a: [], b: [{ id: "faq-b", question: "Second tenant question", answer: "Second tenant answer", location_id: null, enabled: true, is_public: true }] };
+  const team = { a: { members: [{ membership_id: "membership-one", user_id: "owner-id", display_name: "Store Owner", email: "owner@example.test", role: "owner", active: true }], invitations: [] }, b: { members: [], invitations: [] } };
   const api = {
     session: null, restore: async function () { this.session = structuredClone(account); return this.session; },
     login: async function () { this.session = structuredClone(account); return this.session; }, logout: async function () { this.session = null; },
+    current: async function () { return this.session; },
     can: function (id, permission) { return this.session?.businesses.find(item => item.business_id === id)?.permissions.includes(permission) || false; },
     request: async path => {
       const id = path.split("/")[4];
       if (path.endsWith("/faqs")) return structuredClone(faqs[id]);
+      if (path.endsWith("/members")) return structuredClone(team[id]);
       if (path.includes("/audit?")) return { items: [], next_offset: null };
       if (path.endsWith("assistant-override")) return null;
       if (path.endsWith("effective-assistant")) return structuredClone(assistant);
@@ -53,11 +58,20 @@ function setup(permissions = ["business.read", "business.write", "location.write
         else Object.assign(entries.find(item => item.id === path.split("/").at(-1)), payload);
         return {};
       }
+      if (path.endsWith("/invitations") && method === "POST") {
+        return { invitation_id: "invite-one", email: payload.email.toLowerCase(), role: payload.role,
+          expires_at: "2026-10-30T00:00:00Z", token: "secret-one-time-token" };
+      }
+      if (path.includes("/members/")) {
+        const member = team[path.split("/")[4]].members[0];
+        if (method === "PATCH") member.role = payload.role;
+        if (method === "DELETE") team[path.split("/")[4]].members = [];
+      }
       Object.assign(business, payload); return { id: "loc" };
     },
   };
   const app = new AdminApp(root, api, { confirm: () => true, open: (...args) => opened.push(args) });
-  return { root, app, api, writes, opened };
+  return { root, app, api, writes, opened, faqs, team, copied };
 }
 
 test("dashboard loads authorized businesses, renders hostile strings as text and saves flags", async () => {
@@ -296,6 +310,76 @@ test("FAQ forms create, edit, scope and disable public customer entries as text"
   assert.equal(writes[1].payload.is_public, false);
   assert.match(root.textContent, /Main · Disabled · Non-public/);
   assert.equal(app.busy, false);
+});
+
+test("FAQ remove and restore use the retained customer visibility state", async () => {
+  const { root, app, writes, faqs } = setup();
+  faqs.a.push({ id: "faq-one", question: "Parking?", answer: "Street parking.", location_id: null, enabled: true, is_public: true });
+  await app.start();
+  button(root, "FAQs").dispatch("click"); await app.task;
+  button(root, "Remove from customer answers").dispatch("click"); await app.task;
+  assert.deepEqual(writes.at(-1), { path: "/api/v1/businesses/a/faqs/faq-one", method: "PATCH", payload: { enabled: false } });
+  assert.equal(faqs.a[0].is_public, true);
+  assert.ok(button(root, "Restore to customer answers"));
+  button(root, "Restore to customer answers").dispatch("click"); await app.task;
+  assert.equal(writes.at(-1).payload.enabled, true);
+  assert.equal(faqs.a[0].is_public, true);
+});
+
+test("Team uses plain role labels and shows a copy-once invitation link", async () => {
+  const { root, app, writes, copied } = setup(); await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  assert.ok(root.textContent.includes("Owner — full control, including Team access"));
+  assert.ok(root.textContent.includes("Manager — view business information and manage locations and hours"));
+  assert.equal(root.textContent.includes("membership.manage"), false);
+  field(root, "Email").value = "new.person@example.test";
+  field(root, "Role").value = "manager";
+  form(root, "Add a person").dispatch("submit"); await app.task;
+  assert.deepEqual(writes.at(-1), {
+    path: "/api/v1/businesses/a/invitations", method: "POST",
+    payload: { email: "new.person@example.test", role: "manager" },
+  });
+  assert.equal(field(root, "One-time invite link").value, "https://budbot.test/admin/activate.html#secret-one-time-token");
+  assert.ok(root.textContent.includes("Invitation expires"));
+  button(root, "Copy link").dispatch("click"); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(copied, ["https://budbot.test/admin/activate.html#secret-one-time-token"]);
+  button(root, "Business").dispatch("click");
+  assert.equal(field(root, "One-time invite link"), undefined);
+  button(root, "Team").dispatch("click"); await app.task;
+  assert.equal(field(root, "One-time invite link"), undefined);
+});
+
+test("demoting another owner confirms that owner's access change", async () => {
+  const { root, app, writes, team } = setup();
+  team.a.members.push({ membership_id: "membership-two", user_id: "other-owner-id", display_name: "Second Owner", email: "second@example.test", role: "owner", active: true });
+  const confirmations = [];
+  app.confirm = message => { confirmations.push(message); return false; };
+  await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  const card = all(root).find(node => node.tagName === "article" && node.textContent.includes("Second Owner"));
+  assert.ok(card);
+  field(card, "Access").value = "admin";
+  button(card, "Save role").dispatch("click"); await app.task;
+  assert.deepEqual(confirmations, ["Change Second Owner's access? They will lose Team management and invitations they created will be revoked."]);
+  assert.equal(writes.length, 0);
+});
+
+test("Team warns when an invitation address is an IPv6 loopback", async () => {
+  const { root, app } = setup();
+  app.document.defaultView.location.origin = "http://[::1]:8000";
+  await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  field(root, "Email").value = "new.person@example.test";
+  form(root, "Add a person").dispatch("submit"); await app.task;
+  assert.ok(all(root).some(node => node.role === "alert"
+    && node.textContent.includes("only available on this computer")));
+});
+
+test("first-run sign-in guidance points owners to the supported local setup command", async () => {
+  const { root, app } = setup(); app.renderLogin();
+  assert.ok(root.textContent.includes("First time setting up BudBot?"));
+  assert.ok(root.textContent.includes("python -m budbot.admin setup-owner"));
+  assert.ok(root.textContent.includes("docker compose -f docker-compose.dev.yml"));
 });
 
 test("FAQ validation errors retain edits and release controls; reload and relogin preserve saved data", async () => {

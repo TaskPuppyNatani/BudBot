@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     admin_login_window_seconds: int = Field(default=900, ge=60, le=86_400)
     admin_login_lockout_seconds: int = Field(default=900, ge=60, le=86_400)
     admin_login_rate_limit_key: SecretStr | None = None
+    admin_invitation_ttl_seconds: int = Field(default=604_800, ge=900, le=1_209_600)
     ai_tenant_enabled: bool = True
     ai_compatible_endpoints: tuple[str, ...] = ()
     provider_root_key: SecretStr | None = None

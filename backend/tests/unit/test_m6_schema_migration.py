@@ -64,7 +64,7 @@ def test_m6_revision_follows_m55_with_one_alembic_head() -> None:
     config = Config(str(backend_dir / "alembic.ini"))
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["0008_m9b_tenant_ai"]
+    assert scripts.get_heads() == ["0009_m9b_business_invitations"]
     revision = scripts.get_revision("0006_m6_provider_neutral_catalog")
     assert revision is not None
     assert revision.down_revision == "0005_m55_jurisdictional_compliance"

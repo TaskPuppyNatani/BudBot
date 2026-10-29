@@ -80,6 +80,16 @@ arguments or store them in Compose environment variables.
 
 The production compose stack should include health checks and persistent database storage.
 
+### Team invitations
+
+Owners can add people from Admin → Team. BudBot creates a one-time link that the
+owner copies and shares privately; BudBot does not send email. The link expires
+after seven days by default. A recipient with an existing BudBot account signs
+in as that account to accept. A new recipient chooses their own name and
+password. Do not share invitation links over an untrusted connection. A link
+using `localhost` works only on the BudBot computer; use an address the
+recipient can reach (HTTPS when sharing between devices).
+
 A separate development compose file may expose development conveniences.
 
 ## Web administration

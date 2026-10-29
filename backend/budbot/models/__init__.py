@@ -1,5 +1,5 @@
-from budbot.models.provider import BusinessAIProfile, ProviderCredential
 """Import domain models so SQLAlchemy and Alembic receive complete metadata."""
+from budbot.models.provider import BusinessAIProfile, ProviderCredential
 from budbot.models.knowledge import FAQEntry
 from budbot.models.catalog import (
     CatalogCategory,
@@ -14,6 +14,7 @@ from budbot.models.location import Location, LocationHours
 from budbot.models.session import CustomerSession
 from budbot.models.user import BusinessMembership, UserAccount
 from budbot.models.auth import AdminSession, AuthSetupState, AuditEvent, LoginRateLimit
+from budbot.models.invitation import BusinessInvitation
 
 __all__ = [
     "AssistantConfiguration",
@@ -22,6 +23,7 @@ __all__ = [
     "AuditEvent",
     "Business",
     "BusinessMembership",
+    "BusinessInvitation",
     "CatalogCategory",
     "CatalogDeal",
     "CatalogProduct",

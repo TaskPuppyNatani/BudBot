@@ -39,6 +39,7 @@ _AUDIT_CHANGE_FIELDS = frozenset({
     "location_id", "is_public", "primary_brand_color", "assistant_display_name",
     "business_logo", "assistant_avatar", "remove_business_logo", "remove_assistant_avatar",
 })
+_AUDIT_ROLES = frozenset({"owner", "admin", "manager", "viewer"})
 
 
 def audit_details_for_read(details: Mapping[str, Any] | None) -> dict[str, object]:
@@ -54,6 +55,8 @@ def audit_details_for_read(details: Mapping[str, Any] | None) -> dict[str, objec
             result["location_id"] = str(UUID(safe["location_id"])) if safe["location_id"] is not None else None
         except (ValueError, TypeError, AttributeError):
             pass
+    if safe.get("role") in _AUDIT_ROLES:
+        result["role"] = safe["role"]
     changed = safe.get("changed_fields")
     if isinstance(changed, str):
         result["changed_fields"] = ",".join(sorted(set(changed.split(",")) & _AUDIT_CHANGE_FIELDS))

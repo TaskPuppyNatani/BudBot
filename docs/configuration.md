@@ -30,6 +30,7 @@ BUDBOT_ADMIN_LOGIN_FAILURE_LIMIT       default 5 attempts
 BUDBOT_ADMIN_LOGIN_WINDOW_SECONDS      default 900
 BUDBOT_ADMIN_LOGIN_LOCKOUT_SECONDS     default 900
 BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY      required in production; at least 32 bytes
+BUDBOT_ADMIN_INVITATION_TTL_SECONDS   default 604800 (7 days); allowed 900–1209600
 ```
 
 Login throttling uses separate HMAC digests for normalized email and direct peer
