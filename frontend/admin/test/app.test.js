@@ -374,6 +374,12 @@ test("Team clearly lists pending invitations and confirms then removes a revoked
   const { root, app, api, writes, team } = setup();
   team.a.invitations.push({ invitation_id: "private-invitation-id", email: "pending.person@example.test", role: "manager",
     expires_at: "2026-10-30T00:00:00Z" });
+  let teamReads = 0;
+  const request = api.request;
+  api.request = async path => {
+    if (path.endsWith("/members")) teamReads += 1;
+    return request(path);
+  };
   const confirmations = [];
   app.confirm = message => { confirmations.push(message); return true; };
   await app.start();
@@ -381,12 +387,15 @@ test("Team clearly lists pending invitations and confirms then removes a revoked
   assert.ok(root.textContent.includes("Pending invitations"));
   assert.ok(root.textContent.includes("pending.person@example.test"));
   assert.ok(root.textContent.includes("Manager — view business information and manage locations and hours"));
+  assert.equal(teamReads, 1);
   assert.equal(root.textContent.includes("private-invitation-id"), false);
   assert.equal(root.textContent.includes("secret-one-time-token"), false);
   button(root, "Revoke invite").dispatch("click"); await app.task;
   assert.deepEqual(confirmations, ["Revoke the invitation for pending.person@example.test?"]);
   assert.ok(writes.some(write => write.path === "/api/v1/businesses/a/invitations/private-invitation-id" && write.method === "DELETE"));
   assert.equal(team.a.invitations.length, 0);
+  assert.equal(app.team.invitations.length, 0);
+  assert.equal(teamReads, 1, "successful revoke updates the current Team view without another list request");
   assert.ok(root.textContent.includes("No pending invitations."));
   assert.ok(root.textContent.includes("Invitation revoked."));
 });
@@ -411,6 +420,7 @@ test("cancelled or failed invite revocation remains visible and reports the prob
   };
   button(root, "Revoke invite").dispatch("click"); await app.task;
   assert.equal(team.a.invitations.length, 1);
+  assert.equal(app.team.invitations.length, 1);
   assert.ok(root.textContent.includes("Could not revoke the invite. Check your connection and try again."));
   assert.equal(app.failed, true);
   assert.equal(button(root, "Revoke invite").disabled, false);

@@ -465,7 +465,8 @@ export class AdminApp {
       card.append(this.button("Revoke invite", () => this.run(async () => {
         if (!this.confirm.call(globalThis, `Revoke the invitation for ${invite.email}?`)) return false;
         await this.api.mutate(this.path(`/invitations/${invite.invitation_id}`), "DELETE");
-        await this.loadManagementPanel(); this.render();
+        this.team.invitations = this.team.invitations.filter(item => item.invitation_id !== invite.invitation_id);
+        this.render();
       }, "Invitation revoked.", "danger"), "membership.manage"));
       invitationList.append(card);
     }

@@ -437,6 +437,8 @@ test("native Team flow creates a one-time link and warns about localhost reachab
   await page.getByText("No pending invitations.", { exact: true }).waitFor();
   const revokeCall = calls.find(call => call.path === "/api/v1/businesses/a/invitations/invite-one" && call.method === "DELETE");
   assert.ok(revokeCall); assert.equal(revokeCall.hasCsrfHeader, true); assert.equal(revokeCall.status, 204);
+  assert.equal(calls.filter(call => call.path === "/api/v1/businesses/a/members" && call.method === "GET").length, 2,
+    "Team data is not reloaded after revocation; the pending list updates from the successful delete");
   await page.getByText("Invitation revoked.", { exact: true }).waitFor();
   assert.deepEqual(pageErrors, []);
 });
