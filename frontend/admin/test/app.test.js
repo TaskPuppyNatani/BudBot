@@ -69,7 +69,8 @@ function setup(permissions = ["business.read", "business.write", "location.write
         return {};
       }
       if (path.includes("/members/")) {
-        const member = team[path.split("/")[4]].members[0];
+        const members = team[path.split("/")[4]].members;
+        const member = members.find(item => item.membership_id === path.split("/").at(-1));
         if (method === "PATCH") member.role = payload.role;
         if (method === "DELETE") team[path.split("/")[4]].members = [];
       }
@@ -439,6 +440,44 @@ test("demoting another owner confirms that owner's access change", async () => {
   button(card, "Save role").dispatch("click"); await app.task;
   assert.deepEqual(confirmations, ["Change Second Owner's access? They will lose Team management and invitations they created will be revoked."]);
   assert.equal(writes.length, 0);
+});
+
+test("failed role change restores persisted role and retains the server error", async () => {
+  const { root, app, api, team } = setup();
+  app.confirm = () => true;
+  const mutate = api.mutate;
+  api.mutate = async (path, method, payload) => {
+    if (path.endsWith("/membership-one") && method === "PATCH")
+      throw new Error("You’re the only owner of this business. Add another owner before changing or removing your access.");
+    return mutate(path, method, payload);
+  };
+  await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  const card = all(root).find(node => node.tagName === "article" && node.textContent.includes("Store Owner"));
+  const selector = field(card, "Access");
+  selector.value = "admin";
+  button(card, "Save role").dispatch("click"); await app.task;
+  assert.equal(team.a.members[0].role, "owner");
+  assert.equal(selector.value, "owner");
+  assert.ok(root.textContent.includes("You’re the only owner of this business. Add another owner before changing or removing your access."));
+  assert.equal(app.failed, true);
+});
+
+test("successful role change updates the persisted member and refreshed selector", async () => {
+  const { root, app, writes, team } = setup();
+  team.a.members.push({ membership_id: "membership-viewer", user_id: "viewer-id", display_name: "Team Viewer",
+    email: "viewer@example.test", role: "viewer", active: true });
+  await app.start();
+  button(root, "Team").dispatch("click"); await app.task;
+  const card = all(root).find(node => node.tagName === "article" && node.textContent.includes("Team Viewer"));
+  field(card, "Access").value = "manager";
+  button(card, "Save role").dispatch("click"); await app.task;
+  assert.ok(writes.some(write => write.path === "/api/v1/businesses/a/members/membership-viewer"
+    && write.method === "PATCH" && write.payload.role === "manager"));
+  assert.equal(team.a.members[1].role, "manager");
+  const updated = all(root).find(node => node.tagName === "article" && node.textContent.includes("Team Viewer"));
+  assert.equal(field(updated, "Access").value, "manager");
+  assert.ok(root.textContent.includes("Role updated."));
 });
 
 test("Team warns when an invitation address is an IPv6 loopback", async () => {

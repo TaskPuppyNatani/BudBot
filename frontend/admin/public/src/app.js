@@ -443,7 +443,12 @@ export class AdminApp {
             : `Change ${member.display_name || "this owner"}'s access? They will lose Team management and invitations they created will be revoked.`;
           if (!this.confirm.call(globalThis, question)) return false;
         }
-        await this.api.mutate(this.path(`/members/${member.membership_id}`), "PATCH", { role: role.value });
+        try {
+          await this.api.mutate(this.path(`/members/${member.membership_id}`), "PATCH", { role: role.value });
+        } catch (error) {
+          role.value = member.role;
+          throw error;
+        }
         await this.refreshTeamAfterSelfChange(self, "Role updated.");
       }, "Role updated.", "", () => role.value !== member.role), "membership.manage"));
       card.append(this.button("Remove from this business", () => this.run(async () => {
