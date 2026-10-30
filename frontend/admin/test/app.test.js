@@ -387,11 +387,11 @@ test("failed FAQ removal preserves customer visibility and shows the error", asy
   assert.equal(app.failed, true);
 });
 
-test("Delete FAQ works from list and editor, confirms, resets editing and removes immediately", async () => {
+test("Delete FAQ targets only the selected scope immediately and resets only its own editor", async () => {
   const { root, app, api, faqs } = setup();
   faqs.a.push(
-    { id: "faq-list", question: "List deletion?", answer: "Remove from list.", location_id: null, enabled: true, is_public: true },
-    { id: "faq-editor", question: "Editor deletion?", answer: "Remove from editor.", location_id: "loc", enabled: false, is_public: false },
+    { id: "faq-business", question: "Do you have parking?", answer: "Parking across the business.", location_id: null, enabled: true, is_public: true },
+    { id: "faq-location", question: "Do you have parking?", answer: "Parking at Main.", location_id: "loc", enabled: false, is_public: false },
   );
   let faqReads = 0;
   const request = api.request;
@@ -403,28 +403,30 @@ test("Delete FAQ works from list and editor, confirms, resets editing and remove
   app.confirm = message => { confirmations.push(message); return true; };
   await app.start();
   button(root, "FAQs").dispatch("click"); await app.task;
-  const listCard = all(root).find(node => node.tagName === "article" && node.textContent.includes("List deletion?"));
+  const listCard = all(root).find(node => node.tagName === "article" && node.textContent.includes("Parking across the business."));
   assert.ok(button(listCard, "Delete FAQ"));
-  button(listCard, "Delete FAQ").dispatch("click"); await app.task;
+  button(listCard, "Edit FAQ").dispatch("click");
+  const locationCard = all(root).find(node => node.tagName === "article" && node.textContent.includes("Parking at Main."));
+  button(locationCard, "Delete FAQ").dispatch("click"); await app.task;
   assert.deepEqual(confirmations, ["Delete this FAQ permanently?\nThis cannot be undone."]);
-  assert.equal(app.faqs.some(item => item.id === "faq-list"), false);
-  assert.ok(!root.textContent.includes("List deletion?"));
+  assert.deepEqual(app.faqs.map(item => item.id), ["faq-business"]);
+  assert.ok(root.textContent.includes("Parking across the business."));
+  assert.ok(!root.textContent.includes("Parking at Main."));
+  assert.equal(app.editFaqId, "faq-business", "deleting another scope must preserve the open editor");
+  assert.ok(form(root, "Edit FAQ"));
+  assert.ok(root.textContent.includes("FAQ deleted. The answer for Main was removed."));
   assert.equal(faqReads, 1, "list deletion updates locally without reloading FAQ data");
 
-  const editorCard = all(root).find(node => node.tagName === "article" && node.textContent.includes("Editor deletion?"));
-  button(editorCard, "Edit FAQ").dispatch("click");
-  const editForm = form(root, "Edit FAQ");
-  assert.ok(button(editForm, "Delete FAQ"));
-  button(editForm, "Delete FAQ").dispatch("click"); await app.task;
+  button(form(root, "Edit FAQ"), "Delete FAQ").dispatch("click"); await app.task;
   assert.equal(confirmations.length, 2);
   assert.equal(confirmations[1], "Delete this FAQ permanently?\nThis cannot be undone.");
   assert.equal(app.editFaqId, null);
   assert.equal(form(root, "Edit FAQ"), undefined);
   assert.ok(form(root, "New FAQ"));
-  assert.equal(app.faqs.some(item => item.id === "faq-editor"), false);
-  assert.ok(!root.textContent.includes("Editor deletion?"));
-  assert.ok(root.textContent.includes("FAQ deleted."));
-  assert.equal(faqReads, 1, "editor deletion also updates locally without reloading FAQ data");
+  assert.deepEqual(app.faqs, []);
+  assert.ok(!root.textContent.includes("Parking across the business."));
+  assert.ok(root.textContent.includes("FAQ deleted. The business-wide answer was removed."));
+  assert.equal(faqReads, 1, "editor deletion updates locally without reloading FAQ data");
   assert.deepEqual(faqs.a, []);
 });
 
@@ -444,9 +446,13 @@ test("cancelled or failed FAQ deletion keeps the record and provides clear feedb
 
   app.confirm = () => true;
   api.mutate = async () => { throw new ApiError(500, "Internal error marker"); };
-  button(card, "Delete FAQ").dispatch("click"); await app.task;
+  button(card, "Edit FAQ").dispatch("click");
+  const editForm = form(root, "Edit FAQ");
+  button(editForm, "Delete FAQ").dispatch("click"); await app.task;
   assert.equal(app.faqs.length, 1);
   assert.equal(faqs.a.length, 1);
+  assert.equal(app.editFaqId, "faq-one");
+  assert.ok(form(root, "Edit FAQ"));
   assert.ok(root.textContent.includes("Keep this FAQ?"));
   assert.ok(root.textContent.includes("Could not delete this FAQ. Please try again."));
   assert.equal(root.textContent.includes("Internal error marker"), false);

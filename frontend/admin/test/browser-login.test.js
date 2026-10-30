@@ -14,9 +14,9 @@ const account = token => ({ csrf_token: token, user: { id: "owner-id", email: "o
     permissions: ["business.read", "business.write", "location.write", "assistant.write", "branding.write", "faq.read", "faq.write", "audit.read", "provider.read", "provider.write", "membership.manage"] },
 ] });
 
-async function fixture(t, { commandOutput = () => "<script>safe command output</script>" } = {}) {
+async function fixture(t, { commandOutput = () => "<script>safe command output</script>", locations = [] } = {}) {
   const calls = []; const widgetNavigations = []; let token = 0;
-  const faqs = []; const audit = [];
+  const faqs = []; const audit = []; let faqSequence = 0;
   const members = [{ membership_id: "member-one", user_id: "owner-id", display_name: "Store Owner", email: "owner@example.test", role: "owner", active: true }];
   const invitations = [];
   const provider = { configured: true, provider: "openai_compatible", model: "operator-model",
@@ -133,7 +133,8 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
       send(200, provider); return;
     }
     if (path === "/api/v1/businesses/a/audit") { send(200, { items: audit, next_offset: null }); return; }
-    if (path === "/api/v1/businesses/a/faqs" || path === "/api/v1/businesses/a/faqs/faq-one") {
+    const faqPath = "/api/v1/businesses/a/faqs";
+    if (path === faqPath || path.startsWith(`${faqPath}/`)) {
       if (request.method === "GET") { send(200, faqs); return; }
       call.hasCsrfHeader = request.headers["x-csrf-token"] === String(token);
       if (!call.hasCsrfHeader) {
@@ -151,13 +152,20 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
       let text = ""; for await (const chunk of request) text += chunk;
       const payload = call.payload = JSON.parse(text);
       const created = request.method === "POST";
-      if (created) faqs.push({ id: "faq-one", ...payload });
-      else Object.assign(faqs[0], payload);
+      let entry;
+      if (created) {
+        const id = ++faqSequence === 1 ? "faq-one" : `faq-${faqSequence}`;
+        entry = { id, ...payload }; faqs.push(entry);
+      } else {
+        entry = faqs.find(item => item.id === path.split("/").at(-1));
+        if (!entry) { send(404, { detail: "FAQ not found" }); return; }
+        Object.assign(entry, payload);
+      }
       audit.unshift({ id: `audit-${audit.length}`, created_at: "2026-01-01T00:00:00Z",
-        actor_user_id: "owner-id", resource_type: "faq", resource_id: "faq-one",
+        actor_user_id: "owner-id", resource_type: "faq", resource_id: entry.id,
         event_type: created ? "admin.faq.created" : "admin.faq.updated",
         details: { enabled: payload.enabled, is_public: payload.is_public } });
-      send(created ? 201 : 200, faqs[0]); return;
+      send(created ? 201 : 200, entry); return;
     }
     if (path === "/api/v1/auth/logout" && request.method === "POST") {
       if (request.headers["x-csrf-token"] !== String(token)) {
@@ -175,8 +183,11 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
     if (path === "/api/v1/businesses/a") {
       send(200, { id: "a", display_name: "Fixture business", industry: "general_retail", active: true, default_timezone: "UTC" }); return;
     }
+    if (path.endsWith("/assistant-override")) { send(200, null); return; }
+    if (path.endsWith("/effective-assistant")) { send(200, { display_name: "Fixture assistant", greeting: "Hello", fallback_message: "Ask staff", enabled: true }); return; }
+    if (path.includes("/compliance-profile/locations/")) { send(200, { status: "resolved", location_active: true, profile: { profile_id: "general_retail" } }); return; }
     if (path.endsWith("/assistant")) { send(200, { display_name: "Fixture assistant", greeting: "Hello", fallback_message: "Ask staff", enabled: true }); return; }
-    if (path.endsWith("/locations")) { send(200, []); return; }
+    if (path.endsWith("/locations")) { send(200, locations); return; }
     if (path.endsWith("/compliance-profile")) { send(200, { profile_id: "general_retail", requires_age_gate: false }); return; }
     send(404, { detail: "Unknown fixture route." });
   });
@@ -335,16 +346,18 @@ test("native FAQ editing and audit navigation preserve CSRF, text rendering and 
   assert.deepEqual(pageErrors, []);
 });
 
-test("native FAQ deletion works from list and editor, immediately and after reload", async t => {
-  const { page, calls, pageErrors } = await fixture(t);
+test("native FAQ deletion refreshes the exact FAQ scope immediately and after reload", async t => {
+  const locations = [{ id: "loc", display_name: "Main", active: true }];
+  const { page, calls, pageErrors } = await fixture(t, { locations });
   await signIn(page);
   await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
   await page.getByRole("button", { name: "FAQs", exact: true }).click();
   await page.getByText("No FAQs yet.", { exact: true }).waitFor();
 
-  const fillNewFaq = async (question, answer) => {
+  const fillNewFaq = async (question, answer, locationId = "") => {
     await page.getByLabel("Question", { exact: true }).fill(question);
     await page.getByLabel("Answer", { exact: true }).fill(answer);
+    await page.getByLabel("FAQ scope").selectOption(locationId);
     await page.getByRole("button", { name: "Create FAQ", exact: true }).click();
     await page.getByRole("heading", { name: question, exact: true }).waitFor();
   };
@@ -355,45 +368,57 @@ test("native FAQ deletion works from list and editor, immediately and after relo
     assert.equal(message, "Delete this FAQ permanently?\nThis cannot be undone.");
   };
 
-  const listQuestion = "Disposable list FAQ?";
-  await fillNewFaq(listQuestion, "Delete from the FAQ list.");
-  const listCard = page.locator("article").filter({ has: page.getByRole("heading", { name: listQuestion, exact: true }) });
-  const listDelete = listCard.getByRole("button", { name: "Delete FAQ", exact: true });
-  await listDelete.waitFor();
-  const faqReadsBeforeListDelete = calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length;
-  await confirmDelete(listDelete);
-  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("heading", { name: listQuestion, exact: true }).count(), 0);
-  assert.equal(calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length, faqReadsBeforeListDelete);
+  const question = "Do you have parking?";
+  await fillNewFaq(question, "Parking across the business.");
+  await fillNewFaq(question, "Parking at Main.", "loc");
+  await page.getByRole("heading", { name: question, exact: true }).nth(1).waitFor();
+  const faqCards = () => page.locator("article").filter({ has: page.getByRole("heading", { name: question, exact: true }) });
+  const businessCard = () => faqCards().filter({ hasText: "Business-wide · Enabled · Public" });
+  const locationCard = () => faqCards().filter({ hasText: "Main · Enabled · Public" });
+  assert.equal(await faqCards().count(), 2);
+
+  await businessCard().getByRole("button", { name: "Edit FAQ", exact: true }).click();
+  const faqReadsBeforeDelete = calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length;
+  await confirmDelete(locationCard().getByRole("button", { name: "Delete FAQ", exact: true }));
+  await page.getByText("FAQ deleted. The answer for Main was removed.", { exact: true }).waitFor();
+  assert.equal(await faqCards().count(), 1, "the same-question business answer remains while the location FAQ disappears");
+  assert.equal(await businessCard().count(), 1);
+  assert.equal(await locationCard().count(), 0);
+  await page.getByText("Parking across the business.", { exact: true }).waitFor();
+  assert.equal(await page.getByText("Parking at Main.", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("heading", { name: "Edit FAQ", exact: true }).count(), 1,
+    "deleting another scope does not reset the open editor");
+  assert.equal(calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length, faqReadsBeforeDelete,
+    "the visible list updates without a manual or background reload");
+
   await page.reload();
   await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
   await page.getByRole("button", { name: "FAQs", exact: true }).click();
-  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("heading", { name: listQuestion, exact: true }).count(), 0);
-
-  const editorQuestion = "Disposable editor FAQ?";
-  await fillNewFaq(editorQuestion, "Delete from the FAQ editor.");
-  const editorCard = page.locator("article").filter({ has: page.getByRole("heading", { name: editorQuestion, exact: true }) });
-  await editorCard.getByRole("button", { name: "Edit FAQ", exact: true }).click();
+  await page.getByText("Business-wide · Enabled · Public", { exact: true }).waitFor();
+  assert.equal(await faqCards().count(), 1);
+  assert.equal(await businessCard().count(), 1);
+  assert.equal(await locationCard().count(), 0);
+  await page.getByRole("button", { name: "Edit FAQ", exact: true }).click();
   const editForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Edit FAQ", exact: true }) });
-  const editorDelete = editForm.getByRole("button", { name: "Delete FAQ", exact: true });
-  await editorDelete.waitFor();
   const faqReadsBeforeEditorDelete = calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length;
-  await confirmDelete(editorDelete);
-  await page.getByText("FAQ deleted.", { exact: true }).waitFor();
+  await confirmDelete(editForm.getByRole("button", { name: "Delete FAQ", exact: true }));
+  await page.getByText("FAQ deleted. The business-wide answer was removed.", { exact: true }).waitFor();
   await page.getByText("No FAQs yet.", { exact: true }).waitFor();
   assert.equal(await page.getByRole("heading", { name: "Edit FAQ", exact: true }).count(), 0);
-  assert.equal(await page.getByRole("heading", { name: editorQuestion, exact: true }).count(), 0);
+  assert.equal(await faqCards().count(), 0);
   assert.equal(calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length, faqReadsBeforeEditorDelete);
   const deletes = calls.filter(call => call.path.startsWith("/api/v1/businesses/a/faqs/") && call.method === "DELETE");
   assert.equal(deletes.length, 2);
+  assert.deepEqual(deletes.map(call => call.path), [
+    "/api/v1/businesses/a/faqs/faq-2", "/api/v1/businesses/a/faqs/faq-one",
+  ]);
   assert.ok(deletes.every(call => call.hasCsrfHeader && call.status === 204));
 
   await page.reload();
   await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
   await page.getByRole("button", { name: "FAQs", exact: true }).click();
   await page.getByText("No FAQs yet.", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("heading", { name: editorQuestion, exact: true }).count(), 0);
+  assert.equal(await faqCards().count(), 0, "reload confirms both deleted records remain gone");
   assert.deepEqual(pageErrors, []);
 });
 

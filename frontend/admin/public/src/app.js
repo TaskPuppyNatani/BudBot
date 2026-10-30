@@ -404,6 +404,9 @@ export class AdminApp {
         visibilityAction.button = visibilityButton;
         card.append(visibilityButton);
       }
+      const deletedScope = entry.location_id
+        ? this.locations.find(item => item.id === entry.location_id)?.display_name || "this location"
+        : null;
       const deleteFaq = () => this.run(async () => {
         if (!this.confirm.call(globalThis, "Delete this FAQ permanently?\nThis cannot be undone.")) return false;
         try {
@@ -418,7 +421,9 @@ export class AdminApp {
           this.dirty = false;
         }
         this.render();
-      }, "FAQ deleted.");
+      }, deletedScope
+        ? `FAQ deleted. The answer for ${deletedScope} was removed.`
+        : "FAQ deleted. The business-wide answer was removed.");
       visibilityAction.deleteFaq = deleteFaq;
       card.append(this.button("Delete FAQ", deleteFaq, "faq.write"));
       section.append(card);
