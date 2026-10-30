@@ -13,6 +13,7 @@ _EVENTS = {
     "admin.location.deactivated": "Location turned off", "admin.assistant.updated": "Assistant settings changed",
     "admin.assistant.location_override.updated": "Location assistant settings changed",
     "admin.faq.created": "FAQ added", "admin.faq.updated": "FAQ changed",
+    "admin.faq.deleted": "FAQ deleted",
     "admin.branding.saved": "Branding saved", "admin.compliance_profile.updated": "Business rules changed",
     "admin.provider.configuration_updated": "AI provider settings changed",
     "admin.provider.credential_set": "AI key saved", "admin.provider.credential_replaced": "AI key replaced",

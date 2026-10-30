@@ -385,7 +385,7 @@ export class AdminApp {
         this.editFaqId = entry.id; this.dirty = false; this.render();
       }, "faq.write"));
       let visibilityButton;
-      const visibilityAction = { button: null, setEnabled: null };
+      const visibilityAction = { button: null, setEnabled: null, deleteFaq: null };
       const setEnabled = async enabledValue => {
         if (!enabledValue && !this.confirm.call(globalThis,
           "Remove this answer from customer answers? Customers will stop seeing it. The FAQ is kept and can be restored later.")) return false;
@@ -404,6 +404,23 @@ export class AdminApp {
         visibilityAction.button = visibilityButton;
         card.append(visibilityButton);
       }
+      const deleteFaq = () => this.run(async () => {
+        if (!this.confirm.call(globalThis, "Delete this FAQ permanently?\nThis cannot be undone.")) return false;
+        try {
+          await this.api.mutate(this.path(`/faqs/${entry.id}`), "DELETE");
+        } catch (error) {
+          if (error.status === 401 || error.status === 403) throw error;
+          throw new Error("Could not delete this FAQ. Please try again.");
+        }
+        this.faqs = this.faqs.filter(item => item.id !== entry.id);
+        if (this.editFaqId === entry.id) {
+          this.editFaqId = null;
+          this.dirty = false;
+        }
+        this.render();
+      }, "FAQ deleted.");
+      visibilityAction.deleteFaq = deleteFaq;
+      card.append(this.button("Delete FAQ", deleteFaq, "faq.write"));
       section.append(card);
     }
     section.append(this.button("New FAQ", () => {
@@ -432,7 +449,7 @@ export class AdminApp {
         () => visibilityAction.setEnabled(!entry.enabled), entry.enabled ? "Removed from customer answers. The FAQ is retained." : "Answer restored. Customer visibility settings are unchanged.",
       ), permission);
       visibilityAction.button = actionButton;
-      form.append(actionButton);
+      form.append(actionButton, this.button("Delete FAQ", visibilityAction.deleteFaq, permission));
     }
     this.saveButton(form, permission, entry ? "Save FAQ" : "Create FAQ");
     section.append(form); return section;

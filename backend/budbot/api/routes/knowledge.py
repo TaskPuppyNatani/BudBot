@@ -30,3 +30,8 @@ async def create_faq(business_id: UUID, payload: FAQCreate, session: Session, ac
 @router.patch("/{faq_id}", response_model=FAQRead)
 async def update_faq(business_id: UUID, faq_id: UUID, payload: FAQUpdate, session: Session, access: WriteAccess) -> FAQRead:
     return await AdminActions(session, access.tenant, access.user_id).update_faq(faq_id, payload)
+
+
+@router.delete("/{faq_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_faq(business_id: UUID, faq_id: UUID, session: Session, access: WriteAccess) -> None:
+    await AdminActions(session, access.tenant, access.user_id).delete_faq(faq_id)

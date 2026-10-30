@@ -75,6 +75,14 @@ class AdminActions:
             )
         return await self._publish_faq(entry, event_type, payload.model_fields_set)
 
+    async def delete_faq(self, faq_id: UUID):
+        entry = await KnowledgeService(self.session, self.tenant).delete_admin_faq(faq_id)
+        await self._audit("admin.faq.deleted", "faq", entry.id, {
+            "location_id": str(entry.location_id) if entry.location_id else None,
+            "enabled": entry.enabled, "is_public": entry.is_public,
+        })
+        await self.session.commit()
+
     async def test_provider(self, settings, providers, harnesses):
         result = await ProviderService(self.session, self.tenant, settings).test_connection(providers, harnesses)
         await self._audit("admin.provider.connection_tested", "provider", self.tenant.business_id, {

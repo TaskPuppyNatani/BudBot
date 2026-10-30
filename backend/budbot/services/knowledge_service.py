@@ -75,6 +75,13 @@ class KnowledgeService:
         await self.entries.session.refresh(entry)
         return entry
 
+    async def delete_admin_faq(self, entry_id: UUID) -> FAQEntry:
+        await self._lock_admin_scope()
+        entry = await self.entries.get(entry_id, resource_name="FAQ", for_update=True)
+        await self.entries.session.delete(entry)
+        await self.entries.session.flush()
+        return entry
+
     @staticmethod
     def _sort_key(entry: FAQEntry) -> tuple[str, str, str, str]:
         return (

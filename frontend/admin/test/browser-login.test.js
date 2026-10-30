@@ -139,6 +139,15 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
       if (!call.hasCsrfHeader) {
         send(403, { detail: "A valid CSRF token is required for this request." }); return;
       }
+      if (request.method === "DELETE") {
+        const index = faqs.findIndex(item => item.id === path.split("/").at(-1));
+        if (index < 0) { send(404, { detail: "FAQ not found" }); return; }
+        const [removed] = faqs.splice(index, 1);
+        audit.unshift({ id: `audit-${audit.length}`, created_at: "2026-01-01T00:00:00Z",
+          actor_user_id: "owner-id", resource_type: "faq", resource_id: removed.id,
+          event_type: "admin.faq.deleted", details: { enabled: removed.enabled, is_public: removed.is_public } });
+        call.status = 204; response.writeHead(204).end(); return;
+      }
       let text = ""; for await (const chunk of request) text += chunk;
       const payload = call.payload = JSON.parse(text);
       const created = request.method === "POST";
@@ -323,6 +332,68 @@ test("native FAQ editing and audit navigation preserve CSRF, text rendering and 
   assert.equal(await page.getByRole("heading", { name: "admin.faq.created", exact: true }).count(), 1);
   assert.ok(calls.some(call => call.path.endsWith("/faqs") && call.method === "POST" && call.status === 201));
   assert.ok(calls.some(call => call.path.endsWith("/faqs/faq-one") && call.method === "PATCH" && call.status === 200));
+  assert.deepEqual(pageErrors, []);
+});
+
+test("native FAQ deletion works from list and editor, immediately and after reload", async t => {
+  const { page, calls, pageErrors } = await fixture(t);
+  await signIn(page);
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  await page.getByRole("button", { name: "FAQs", exact: true }).click();
+  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
+
+  const fillNewFaq = async (question, answer) => {
+    await page.getByLabel("Question", { exact: true }).fill(question);
+    await page.getByLabel("Answer", { exact: true }).fill(answer);
+    await page.getByRole("button", { name: "Create FAQ", exact: true }).click();
+    await page.getByRole("heading", { name: question, exact: true }).waitFor();
+  };
+  const confirmDelete = async buttonToClick => {
+    let message = "";
+    page.once("dialog", async dialog => { message = dialog.message(); await dialog.accept(); });
+    await buttonToClick.click();
+    assert.equal(message, "Delete this FAQ permanently?\nThis cannot be undone.");
+  };
+
+  const listQuestion = "Disposable list FAQ?";
+  await fillNewFaq(listQuestion, "Delete from the FAQ list.");
+  const listCard = page.locator("article").filter({ has: page.getByRole("heading", { name: listQuestion, exact: true }) });
+  const listDelete = listCard.getByRole("button", { name: "Delete FAQ", exact: true });
+  await listDelete.waitFor();
+  const faqReadsBeforeListDelete = calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length;
+  await confirmDelete(listDelete);
+  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: listQuestion, exact: true }).count(), 0);
+  assert.equal(calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length, faqReadsBeforeListDelete);
+  await page.reload();
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  await page.getByRole("button", { name: "FAQs", exact: true }).click();
+  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: listQuestion, exact: true }).count(), 0);
+
+  const editorQuestion = "Disposable editor FAQ?";
+  await fillNewFaq(editorQuestion, "Delete from the FAQ editor.");
+  const editorCard = page.locator("article").filter({ has: page.getByRole("heading", { name: editorQuestion, exact: true }) });
+  await editorCard.getByRole("button", { name: "Edit FAQ", exact: true }).click();
+  const editForm = page.locator("form").filter({ has: page.getByRole("heading", { name: "Edit FAQ", exact: true }) });
+  const editorDelete = editForm.getByRole("button", { name: "Delete FAQ", exact: true });
+  await editorDelete.waitFor();
+  const faqReadsBeforeEditorDelete = calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length;
+  await confirmDelete(editorDelete);
+  await page.getByText("FAQ deleted.", { exact: true }).waitFor();
+  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: "Edit FAQ", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("heading", { name: editorQuestion, exact: true }).count(), 0);
+  assert.equal(calls.filter(call => call.path === "/api/v1/businesses/a/faqs" && call.method === "GET").length, faqReadsBeforeEditorDelete);
+  const deletes = calls.filter(call => call.path.startsWith("/api/v1/businesses/a/faqs/") && call.method === "DELETE");
+  assert.equal(deletes.length, 2);
+  assert.ok(deletes.every(call => call.hasCsrfHeader && call.status === 204));
+
+  await page.reload();
+  await page.getByRole("heading", { name: "Business settings", exact: true }).waitFor();
+  await page.getByRole("button", { name: "FAQs", exact: true }).click();
+  await page.getByText("No FAQs yet.", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: editorQuestion, exact: true }).count(), 0);
   assert.deepEqual(pageErrors, []);
 });
 

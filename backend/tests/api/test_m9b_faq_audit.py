@@ -80,8 +80,58 @@ async def test_faq_crud_states_and_metadata_only_audit(faq_admin):
         "admin.faq.removed_from_customer_answers",
         "admin.faq.restored_to_customer_answers",
     }
-    # Disable/re-enable is the removal contract; no destructive route exists.
-    assert (await f.client.delete(f.base + f"/faqs/{entry['id']}")).status_code == 405
+    assert (await f.client.delete(f.base + f"/faqs/{entry['id']}")).status_code == 204
+    assert (await f.client.get(f.base + "/faqs")).json() == []
+
+
+async def test_faq_delete_is_permanent_tenant_scoped_and_audited(faq_admin):
+    f = faq_admin
+    deleted = (await create(f, question="Permanent deletion marker?", answer="Delete this answer.", location_id=f.location)).json()
+    sibling = (await create(f, question="Keep this FAQ?", answer="Keep this answer.")).json()
+
+    response = await f.client.delete(f.base + f"/faqs/{deleted['id']}")
+    assert response.status_code == 204
+    assert response.content == b""
+    listed = (await f.client.get(f.base + "/faqs")).json()
+    assert [item["id"] for item in listed] == [sibling["id"]]
+    assert await f.db.get(FAQEntry, UUID(deleted["id"])) is None
+    assert await f.db.get(FAQEntry, UUID(sibling["id"])) is not None
+    assert await f.db.get(FAQEntry, UUID(f.private)) is not None
+    missing = await f.client.patch(f.base + f"/faqs/{deleted['id']}", json={"answer": "No longer exists."})
+    assert missing.status_code == 404 and missing.json()["code"] == "FAQ_NOT_FOUND"
+    assert (await f.client.delete(f.base + f"/faqs/{uuid4()}")).status_code == 404
+
+    history = (await f.client.get(f.base + "/audit")).json()["items"]
+    event = next(item for item in history if item["event_type"] == "admin.faq.deleted")
+    assert event["business_id"] == f.bid
+    assert event["actor_user_id"] == f.user
+    assert event["resource_type"] == "faq" and event["resource_id"] == deleted["id"]
+    assert event["details"] == {"location_id": f.location, "enabled": True, "is_public": True}
+    assert "Permanent deletion marker" not in json.dumps(event)
+    assert "Delete this answer" not in json.dumps(event)
+
+    cross_tenant = await f.client.delete(f.base + f"/faqs/{f.private}")
+    assert cross_tenant.status_code == 404 and cross_tenant.json()["code"] == "FAQ_NOT_FOUND"
+    assert await f.db.get(FAQEntry, UUID(f.private)) is not None
+
+
+async def test_faq_delete_requires_faq_write_and_csrf(faq_admin):
+    f = faq_admin
+    entry = (await create(f, question="Protected FAQ?", answer="Keep me.")).json()
+    membership = await f.db.scalar(select(BusinessMembership).where(BusinessMembership.business_id == UUID(f.bid)))
+    membership.role = "manager"
+    await f.db.commit()
+    forbidden = await f.client.delete(f.base + f"/faqs/{entry['id']}")
+    assert forbidden.status_code == 403
+    assert await f.db.get(FAQEntry, UUID(entry["id"])) is not None
+
+    membership.role = "owner"
+    await f.db.commit()
+    csrf = f.client.headers.pop("X-CSRF-Token")
+    missing_csrf = await f.client.delete(f.base + f"/faqs/{entry['id']}")
+    assert missing_csrf.status_code == 403
+    assert await f.db.get(FAQEntry, UUID(entry["id"])) is not None
+    f.client.headers["X-CSRF-Token"] = csrf
 
 
 @pytest.mark.parametrize("role,read,write,audit", [
@@ -90,12 +140,17 @@ async def test_faq_crud_states_and_metadata_only_audit(faq_admin):
 ])
 async def test_central_role_policy(faq_admin, role, read, write, audit):
     f = faq_admin
+    entry = (await create(f, question="Role-protected FAQ?", answer="Delete permission is required.")).json()
     membership = await f.db.scalar(select(BusinessMembership).where(BusinessMembership.business_id == UUID(f.bid)))
     membership.role = role
     await f.db.commit()
     assert (await f.client.get(f.base + "/faqs")).status_code == read
     assert (await create(f)).status_code == write
     assert (await f.client.get(f.base + "/audit")).status_code == audit
+    deletion = await f.client.delete(f.base + f"/faqs/{entry['id']}")
+    assert deletion.status_code == (204 if role in {"owner", "admin"} else 403)
+    if role not in {"owner", "admin"}:
+        assert await f.db.get(FAQEntry, UUID(entry["id"])) is not None
     if write == 403:
         assert (await f.client.patch(f.base + f"/faqs/{f.private}", json={"enabled": False})).status_code == 403
 
@@ -111,6 +166,8 @@ async def test_cross_tenant_faq_audit_and_location_are_indistinguishable_from_mi
     for entry_id in (f.private, str(uuid4())):
         denied = await f.client.patch(f.base + f"/faqs/{entry_id}", json={"answer": "Takeover"})
         assert denied.status_code == 404 and denied.json()["code"] == "FAQ_NOT_FOUND"
+        deleted = await f.client.delete(f.base + f"/faqs/{entry_id}")
+        assert deleted.status_code == 404 and deleted.json()["code"] == "FAQ_NOT_FOUND"
     entry = (await create(f)).json()
     for location_id in (f.foreign_location, str(uuid4())):
         assert (await create(f, location_id=location_id)).status_code == 404
@@ -165,7 +222,8 @@ async def test_authentication_membership_and_csrf_cannot_be_bypassed_by_selector
         await f.db.commit()
         expected = 404
     for method, suffix, payload in (("POST", "/faqs", {"question": "Q", "answer": "A"}),
-                                     ("PATCH", f"/faqs/{entry['id']}", {"enabled": False})):
+                                     ("PATCH", f"/faqs/{entry['id']}", {"enabled": False}),
+                                     ("DELETE", f"/faqs/{entry['id']}", None)):
         result = await f.client.request(method, f.base + suffix, json=payload, headers={"X-BudBot-Business-ID": f.bid})
         assert result.status_code == expected, result.text
     if expected != 403:
@@ -220,8 +278,8 @@ async def test_customer_faq_resolution_tracks_admin_edits_without_admin_auth(faq
     async with AsyncClient(transport=f.client._transport, base_url="http://testserver", headers={"X-BudBot-Business-ID": f.bid}) as customer:
         sessions = [(await customer.post("/api/v1/sessions", json=payload)).json()["id"] for payload in ({}, {"selected_location_id": f.location})]
 
-        async def lookup(session_id, expected=200):
-            result = await customer.post("/api/v1/commands/execute", json={"session_id": session_id, "input": "/faq parking?"})
+        async def lookup(session_id, expected=200, question="parking?"):
+            result = await customer.post("/api/v1/commands/execute", json={"session_id": session_id, "input": f"/faq {question}"})
             assert result.status_code == expected, result.text
             if expected == 404:
                 assert result.json()["code"] == "FAQ_NOT_FOUND"
@@ -236,6 +294,11 @@ async def test_customer_faq_resolution_tracks_admin_edits_without_admin_auth(faq
         assert (await f.client.patch(f.base + f"/faqs/{global_entry['id']}", json={"is_public": False})).status_code == 200
         assert "Use the main lot." not in await lookup(sessions[0], 404)
         assert "Use the local lot." not in await lookup(sessions[1], 404)
+        disposable = (await create(f, question="Holiday hours?", answer="Holiday hours answer.")).json()
+        assert "Holiday hours answer." in await lookup(sessions[0], question="holiday hours")
+        deleted = await f.client.delete(f.base + f"/faqs/{disposable['id']}")
+        assert deleted.status_code == 204
+        assert "Holiday hours answer." not in await lookup(sessions[0], 404, question="holiday hours")
         assert (await customer.get(f.base + "/faqs")).status_code == 401
 
 
