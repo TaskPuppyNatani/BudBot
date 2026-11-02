@@ -107,3 +107,15 @@ class CatalogAdminService:
         await self.session.flush()
         result = await self.product_read(row) if kind == "product" else DealRead.model_validate(row)
         return await self._publish(user_id, kind, row, result, {"enabled"}, "restored" if enabled else "hidden")
+
+    async def delete_product(self, product_id: UUID, user_id: UUID):
+        await self._lock_scope()
+        product = await self.repo.products.get(product_id, resource_name="product", for_update=True)
+        # Existing composite tenant FKs cascade product offerings and product-linked
+        # deals. Locations, categories and unrelated deals/products are retained.
+        await self.session.delete(product)
+        await self.session.flush()
+        await record_audit_event(self.session, "admin.catalog.product.deleted",
+            actor_user_id=user_id, business_id=self.tenant.business_id,
+            resource_type="catalog_product", resource_id=product_id, details={})
+        await self.session.commit()

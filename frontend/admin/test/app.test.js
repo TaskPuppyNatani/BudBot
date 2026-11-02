@@ -56,6 +56,7 @@ function setup(permissions = ["business.read", "business.write", "location.write
       writes.push({ path, method, payload });
       if (path.includes("/catalog/")) {
         const kind = path.split("/")[6]; const rows = catalog[path.split("/")[4]][kind];
+        if (method === "DELETE") { rows.splice(rows.findIndex(item => item.id === path.split("/").at(-1)), 1); return; }
         if (method === "POST") { const entry = { id: `${kind}-${rows.length}`, ...structuredClone(payload) }; rows.push(entry); return structuredClone(entry); }
         const entry = rows.find(item => item.id === path.split("/").at(-1));
         Object.assign(entry, structuredClone(payload)); return structuredClone(entry);
@@ -147,6 +148,29 @@ test("catalog deals save, edit and hide separately; read-only roles cannot mutat
   assert.ok(button(viewer.root, "Catalog")); assert.equal(button(viewer.root, "Save product").disabled, true);
   form(viewer.root, "Add product").dispatch("submit"); await viewer.app.task;
   assert.equal(viewer.writes.length, 0);
+});
+
+test("permanent product deletion confirms, removes exactly one card and editor immediately; failure preserves state", async () => {
+  const { root, app, api, catalog, writes } = setup();
+  const row = { name: "Same tea", category: "Drinks", enabled: true, offerings: [] };
+  catalog.a.products.push({ id: "one", ...row }, { id: "two", ...row });
+  app.tab = "Catalog"; await app.start(); button(root, "Edit product").dispatch("click");
+  assert.ok(button(form(root, "Edit product"), "Delete product permanently"));
+  app.confirm = () => false;
+  button(root, "Delete product permanently").dispatch("click"); await app.task;
+  assert.equal(writes.length, 0); assert.equal(app.catalog.products.length, 2);
+  const original = api.mutate;
+  api.mutate = async () => { throw new Error("Could not delete product. Please retry."); };
+  app.confirm = function (message) { assert.equal(this, globalThis); assert.match(message, /cannot be undone/); return true; };
+  button(root, "Delete product permanently").dispatch("click"); await app.task;
+  assert.equal(app.editProductId, "one"); assert.equal(app.catalog.products.length, 2);
+  assert.ok(root.textContent.includes("Could not delete product"));
+  api.mutate = original;
+  button(root, "Delete product permanently").dispatch("click"); await app.task;
+  assert.deepEqual(app.catalog.products.map(p => p.id), ["two"]); assert.equal(app.editProductId, null);
+  assert.ok(root.textContent.includes("Product permanently deleted."));
+  await app.loadManagementPanel(); app.render();
+  assert.deepEqual(app.catalog.products.map(p => p.id), ["two"]);
 });
 
 test("catalog hides only the selected same-name product and preserves another editor; tenant switching clears catalog", async () => {

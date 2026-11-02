@@ -36,6 +36,11 @@ async def product_visibility(business_id: UUID, product_id: UUID, payload: Visib
     return await CatalogAdminService(session, access.tenant).set_visibility("product", product_id, payload.enabled, access.user_id)
 
 
+@router.delete("/products/{product_id}", status_code=204)
+async def delete_product(business_id: UUID, product_id: UUID, session: Session, access: WriteAccess):
+    await CatalogAdminService(session, access.tenant).delete_product(product_id, access.user_id)
+
+
 @router.post("/deals", response_model=DealRead, status_code=201)
 async def create_deal(business_id: UUID, payload: DealInput, session: Session, access: WriteAccess):
     return await CatalogAdminService(session, access.tenant).save_deal(payload, access.user_id)

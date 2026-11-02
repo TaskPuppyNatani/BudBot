@@ -73,6 +73,7 @@ class DealInput(DomainSchema):
 
 class DealRead(DealInput):
     id: UUID
+    product_id: UUID | None = None
 
 
 class CatalogRead(DomainSchema):

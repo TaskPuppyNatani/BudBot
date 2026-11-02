@@ -86,8 +86,9 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
     if (path.startsWith("/api/v1/businesses/a/catalog/")) {
       if (request.headers["x-csrf-token"] !== String(token)) { send(403, { detail: "A valid CSRF token is required." }); return; }
       let text = ""; for await (const chunk of request) text += chunk;
-      call.payload = JSON.parse(text);
+      call.payload = text ? JSON.parse(text) : null;
       const rows = catalog[path.split("/")[6]];
+      if (request.method === "DELETE") { rows.splice(rows.findIndex(item => item.id === path.split("/").at(-1)), 1); call.status = 204; response.writeHead(204).end(); return; }
       let row;
       if (request.method === "POST") { row = { id: `product-${rows.length}`, ...call.payload }; rows.push(row); }
       else { row = rows.find(item => item.id === path.split("/").at(-1)); Object.assign(row, call.payload); }
@@ -252,6 +253,13 @@ test("native owner catalog creates, edits and removes a disposable product witho
   await page.reload(); await page.getByRole("button", { name: "Catalog", exact: true }).click();
   await card().getByRole("button", { name: "Restore product to customers", exact: true }).waitFor();
   assert.ok(calls.some(call => call.path.endsWith("/catalog/products/product-0") && call.method === "PATCH" && call.payload.enabled === false));
+  page.once("dialog", dialog => { assert.match(dialog.message(), /cannot be undone/); return dialog.accept(); });
+  await card().getByRole("button", { name: "Delete product permanently", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector("article"));
+  assert.match(await page.locator('[role="status"]').textContent(), /Product permanently deleted/);
+  await page.reload(); await page.getByRole("button", { name: "Catalog", exact: true }).click();
+  await page.getByText("No products yet.", { exact: true }).waitFor();
+  assert.equal(await card().count(), 0);
   assert.deepEqual(pageErrors, []);
 });
 

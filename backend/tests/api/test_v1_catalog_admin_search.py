@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from budbot.models.business import Business
-from budbot.models.catalog import CatalogProduct
+from budbot.models.catalog import CatalogProduct, ProductOffering, CatalogDeal
 from budbot.models.location import Location
 from budbot.models.knowledge import FAQEntry
 from budbot.models.user import BusinessMembership
@@ -189,3 +189,50 @@ async def test_search_still_enforces_customer_compliance(catalog):
     await f.db.commit()
     response = await command(f, "/search tea")
     assert response.status_code == 403 and response.json()["code"] == "AGE_VERIFICATION_REQUIRED"
+
+
+@pytest.mark.parametrize("role,expected", [("owner", 204), ("admin", 204), ("manager", 403), ("viewer", 403)])
+async def test_permanent_delete_role_policy(catalog, role, expected):
+    f = catalog; row = await create(f)
+    membership = await f.db.scalar(select(BusinessMembership).where(BusinessMembership.business_id == UUID(f.bid)))
+    membership.role = role; await f.db.commit()
+    assert (await f.client.delete(f.base + f"/catalog/products/{row['id']}")).status_code == expected
+
+
+async def test_permanent_delete_cascades_only_target_and_publishes_safe_audit(catalog):
+    f = catalog; row = await create(f); sibling = await create(f, name="Keep tea")
+    repo = CatalogRepository(f.db, TenantContext(UUID(f.bid)))
+    linked = await repo.create_deal(title="Linked", description="Do not audit this", product_id=UUID(row["id"]))
+    unrelated = await repo.create_deal(title="Keep deal", description="Keep")
+    linked_id, unrelated_id = linked.id, unrelated.id
+    await f.db.commit()
+    assert (await f.client.delete(f.base + f"/catalog/products/{row['id']}")).status_code == 204
+    listing = (await f.client.get(f.base + "/catalog")).json()
+    assert [p["id"] for p in listing["products"]] == [sibling["id"]]
+    assert await f.db.scalar(select(CatalogProduct).where(CatalogProduct.id == UUID(row["id"]))) is None
+    assert await f.db.scalar(select(ProductOffering).where(ProductOffering.product_id == UUID(row["id"]))) is None
+    assert await f.db.scalar(select(CatalogDeal).where(CatalogDeal.id == linked_id)) is None
+    assert await f.db.scalar(select(CatalogDeal).where(CatalogDeal.id == unrelated_id)) is not None
+    for text in ("/products", "/search tea"):
+        output = (await command(f, text)).json()["output"]
+        assert "Cedar tea" not in output and "Keep tea" in output
+    audit = (await f.client.get(f.base + "/audit")).json()["items"]
+    event = next(e for e in audit if e["event_type"] == "admin.catalog.product.deleted")
+    assert event["resource_id"] == row["id"] and event["details"] == {}
+    assert "Do not audit this" not in json.dumps(audit)
+    assert (await f.client.delete(f.base + f"/catalog/products/{row['id']}")).status_code == 404
+
+
+async def test_permanent_delete_csrf_auth_and_foreign_product_protection(catalog):
+    f = catalog; row = await create(f)
+    repo = CatalogRepository(f.db, TenantContext(UUID(f.foreign)))
+    category = await repo.create_category("Foreign")
+    foreign = await repo.create_product(category_id=category.id, name="Foreign")
+    foreign_id = str(foreign.id); await f.db.commit()
+    assert (await f.client.delete(f.base + f"/catalog/products/{foreign_id}")).status_code == 404
+    csrf = f.client.headers.pop("X-CSRF-Token")
+    assert (await f.client.delete(f.base + f"/catalog/products/{row['id']}")).status_code == 403
+    f.client.headers["X-CSRF-Token"] = csrf
+    assert len((await f.client.get(f.base + "/catalog")).json()["products"]) == 1
+    f.client.cookies.clear()
+    assert (await f.client.delete(f.base + f"/catalog/products/{row['id']}", headers={"X-BudBot-Business-ID": f.bid})).status_code == 401

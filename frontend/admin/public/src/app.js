@@ -496,6 +496,20 @@ export class AdminApp {
       if (product.description) card.append(this.node("p", product.description));
       card.append(this.node("p", `Offered at: ${places.join(", ") || "No locations selected"}`));
       actions(card, product, "products", "editProductId", "product"); section.append(card);
+      const deleteProduct = () => {
+        if (!this.discard()) return;
+        if (!this.confirm.call(globalThis, "Delete this product permanently? This cannot be undone. Its location prices, availability and product-specific deals will also be deleted.")) return;
+        return this.run(async () => {
+          await this.api.mutate(this.path(`/catalog/products/${product.id}`), "DELETE");
+          this.catalog.products = this.catalog.products.filter(item => item.id !== product.id);
+          this.catalog.deals = this.catalog.deals.filter(item => item.product_id !== product.id);
+          if (this.editProductId === product.id) { this.editProductId = null; this.dirty = false; }
+          if (!this.catalog.deals.some(item => item.id === this.editDealId)) this.editDealId = null;
+          this.render();
+        }, "Product permanently deleted.");
+      };
+      card.append(this.button("Delete product permanently", deleteProduct, permission, "danger"));
+      if (this.editProductId === product.id) this.deleteEditedProduct = deleteProduct;
     }
     section.append(this.button("Add product", () => {
       if (!this.discard()) return;
@@ -535,7 +549,9 @@ export class AdminApp {
       const currency = this.field(row, "Currency", existing?.currency || "USD", { permission, options: this.catalog.currencies.map(code => [code, `${new Intl.DisplayNames(["en"], { type: "currency" }).of(code)} (${code})`]) });
       offers.push({ id: location.id, offered, availability, price, currency }); productForm.append(row);
     }
-    this.saveButton(productForm, permission, "Save product"); section.append(productForm);
+    this.saveButton(productForm, permission, "Save product");
+    if (product) productForm.append(this.button("Delete product permanently", this.deleteEditedProduct, permission, "danger"));
+    section.append(productForm);
     section.append(this.node("h3", "Deals"));
     if (!this.catalog.deals.length) section.append(this.node("p", "No deals yet."));
     for (const deal of this.catalog.deals) {
