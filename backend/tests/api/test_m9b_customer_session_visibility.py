@@ -9,7 +9,7 @@ it does not establish PostgreSQL's concurrent isolation behavior.
 import asyncio
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 import inspect
 import json
 from uuid import UUID, uuid4
@@ -21,7 +21,7 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from budbot.api.routes import sessions as session_routes
-from budbot.core.time import utc_now
+from budbot.core.time import ensure_utc, utc_now
 from budbot.database.base import Base
 from budbot.models.assistant import AssistantConfiguration, LocationAssistantOverride
 from budbot.models.business import Business
@@ -271,3 +271,59 @@ async def test_session_boundaries_remain_enforced(customer_race_client, failure)
         assert response.status_code == (410 if failure == "expired" else 404), response.text
         if failure == "expired":
             assert response.json()["code"] == "SESSION_EXPIRED"
+
+
+async def test_direct_session_read_persists_first_expiry(customer_race_client):
+    client, factory, location_id, other_id, _observe = customer_race_client
+    created = await client.post(
+        "/api/v1/sessions", json={"selected_location_id": location_id}
+    )
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    path = f"/api/v1/sessions/{session_id}"
+    active = await client.get(path)
+    assert active.status_code == 200
+    assert active.json() == created.json()
+
+    same_tenant = await client.post("/api/v1/sessions", json={})
+    other_tenant = await client.post(
+        "/api/v1/sessions", json={}, headers={"X-BudBot-Business-ID": other_id}
+    )
+    assert same_tenant.status_code == other_tenant.status_code == 201
+    async with factory() as writer:
+        record = await writer.get(CustomerSession, UUID(session_id))
+        record.expires_at = utc_now() - timedelta(seconds=1)
+        await writer.commit()
+
+    denied = await client.get(path, headers={"X-BudBot-Business-ID": other_id})
+    assert denied.status_code == 404
+    assert denied.json()["code"] == "SESSION_NOT_FOUND"
+
+    first = await client.get(path)
+    assert first.status_code == 200, first.text
+    data = first.json()
+    assert data["id"] == session_id
+    assert data["age_gate_status"] == "EXPIRED"
+    for key in (
+        "business_id", "selected_location_id", "compliance_profile_id", "age_attested_at"
+    ):
+        assert data[key] == created.json()[key]
+    async with factory() as observer:
+        stored = await observer.get(CustomerSession, UUID(session_id))
+        assert stored.age_gate_status == "EXPIRED"
+        assert ensure_utc(stored.updated_at) == ensure_utc(
+            datetime.fromisoformat(data["updated_at"])
+        )
+        for untouched in (same_tenant, other_tenant):
+            record = await observer.get(CustomerSession, UUID(untouched.json()["id"]))
+            assert record.age_gate_status == untouched.json()["age_gate_status"]
+            assert ensure_utc(record.expires_at) == ensure_utc(
+                datetime.fromisoformat(untouched.json()["expires_at"])
+            )
+
+    repeated = await client.get(path)
+    assert repeated.status_code == 200
+    assert repeated.json() == data
+    age_gate = await client.get(f"{path}/age-gate")
+    assert age_gate.status_code == 200
+    assert age_gate.json()["age_gate_status"] == "EXPIRED"

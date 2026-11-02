@@ -10,7 +10,11 @@ from budbot.core.tenancy import TenantContext
 from budbot.models.business import Business
 from budbot.models.location import Location
 from budbot.schemas.business import BusinessUpdate
-from budbot.schemas.session import CustomerSessionCreate, SessionLocationUpdate
+from budbot.schemas.session import (
+    CustomerSessionCreate,
+    CustomerSessionRead,
+    SessionLocationUpdate,
+)
 from budbot.services.business_service import BusinessService
 from budbot.services.session_service import SessionService
 
@@ -31,6 +35,29 @@ async def test_session_ttl_is_injected_and_expiry_is_deterministic(db_session) -
     assert ensure_utc(customer_session.expires_at) == fixed_now + timedelta(
         seconds=60
     )
+
+
+@pytest.mark.parametrize("offset_microseconds", [-1, 0, 1])
+async def test_session_read_at_expiry_boundary(db_session, offset_microseconds) -> None:
+    business = Business(display_name="Expiry boundary", industry="general_retail")
+    db_session.add(business)
+    await db_session.flush()
+    now = datetime(2026, 9, 21, 12, 0, tzinfo=UTC)
+    service = SessionService(
+        db_session, TenantContext(business.id), ttl_seconds=60, clock=lambda: now
+    )
+    customer = await service.create(CustomerSessionCreate())
+    expires_at = ensure_utc(customer.expires_at)
+    now = expires_at + timedelta(microseconds=offset_microseconds)
+
+    result = CustomerSessionRead.model_validate(await service.get(customer.id))
+    assert result.age_gate_status == (
+        "NOT_REQUIRED" if offset_microseconds < 0 else "EXPIRED"
+    )
+    assert ensure_utc(result.expires_at) == expires_at
+    await db_session.commit()
+    await db_session.refresh(customer)
+    assert customer.age_gate_status == result.age_gate_status
 
 
 async def test_inactive_business_blocks_customer_sessions_and_allows_reactivation(

@@ -212,6 +212,9 @@ class SessionService:
         if ensure_utc(customer_session.expires_at) <= ensure_utc(self.clock()):
             customer_session.age_gate_status = AgeGateStatus.EXPIRED
             await self.session.flush()
+            # The update expires the database-generated updated_at value.
+            # Load it asynchronously before response serialization reads it.
+            await self.session.refresh(customer_session)
 
     async def _validate_location(self, location_id: UUID | None) -> Location | None:
         if location_id is None:
