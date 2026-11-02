@@ -38,6 +38,7 @@ _AUDIT_CHANGE_FIELDS = frozenset({
     "avatar_reference", "primary_color_override", "enabled", "question", "answer",
     "location_id", "is_public", "primary_brand_color", "assistant_display_name",
     "business_logo", "assistant_avatar", "remove_business_logo", "remove_assistant_avatar",
+    "name", "category", "brand", "description", "offerings", "title",
 })
 _AUDIT_ROLES = frozenset({"owner", "admin", "manager", "viewer"})
 

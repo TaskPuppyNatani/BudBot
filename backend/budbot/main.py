@@ -22,6 +22,7 @@ from budbot.api.routes.chat import router as chat_router
 from budbot.api.routes.health import router as health_router
 from budbot.api.routes.locations import router as locations_router
 from budbot.api.routes.knowledge import router as knowledge_router
+from budbot.api.routes.catalog import router as catalog_router
 from budbot.api.routes.local_branding import router as local_branding_router
 from budbot.api.routes.local_runtime import router as local_runtime_router
 from budbot.api.routes.sessions import router as sessions_router
@@ -72,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(provider_router)
     application.include_router(audit_router)
     application.include_router(knowledge_router)
+    application.include_router(catalog_router)
     application.include_router(team_router)
     application.include_router(branding_router)
     application.include_router(businesses_router)

@@ -262,8 +262,8 @@ async def test_local_provider_commands_are_location_scoped_factual_and_searchabl
         SessionLocationUpdate(selected_location_id=second_location.id),
     )
     east = await executor.execute("/products", context)
-    assert "Availability: unavailable" in east.output
-    assert "USD 15.00" in east.output
+    assert "No products are listed" in east.output
+    assert "USD 15.00" not in east.output
     assert "Electric Mint" not in east.output
 
 

@@ -95,7 +95,7 @@ def register_customer_commands(
         ),
         _customer(
             "search",
-            "Search factual catalog data at the selected location.",
+            "Search products and public store information at the selected location.",
             search,
             feature="products_enabled",
             compliance=ComplianceCapability.CATALOG_SEARCH,

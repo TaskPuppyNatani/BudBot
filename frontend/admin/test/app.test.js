@@ -31,6 +31,7 @@ function setup(permissions = ["business.read", "business.write", "location.write
   const assistant = { display_name: "Assistant", greeting: "Hello", fallback_message: "Ask staff", enabled: true };
   const location = { id: "loc", display_name: "Main", active: true, hours: [], timezone: "UTC" };
   const faqs = { a: [], b: [{ id: "faq-b", question: "Second tenant question", answer: "Second tenant answer", location_id: null, enabled: true, is_public: true }] };
+  const catalog = { a: { products: [], deals: [], currencies: ["USD", "JPY"] }, b: { products: [], deals: [], currencies: ["USD"] } };
   const team = { a: { members: [{ membership_id: "membership-one", user_id: "owner-id", display_name: "Store Owner", email: "owner@example.test", role: "owner", active: true }], invitations: [] }, b: { members: [], invitations: [] } };
   const api = {
     session: null, restore: async function () { this.session = structuredClone(account); return this.session; },
@@ -40,6 +41,7 @@ function setup(permissions = ["business.read", "business.write", "location.write
     request: async path => {
       const id = path.split("/")[4];
       if (path.endsWith("/faqs")) return structuredClone(faqs[id]);
+      if (path.endsWith("/catalog")) return structuredClone(catalog[id]);
       if (path.endsWith("/members")) return structuredClone(team[id]);
       if (path.includes("/audit?")) return { items: [], next_offset: null };
       if (path.endsWith("assistant-override")) return null;
@@ -52,6 +54,12 @@ function setup(permissions = ["business.read", "business.write", "location.write
     },
     mutate: async (path, method, payload) => {
       writes.push({ path, method, payload });
+      if (path.includes("/catalog/")) {
+        const kind = path.split("/")[6]; const rows = catalog[path.split("/")[4]][kind];
+        if (method === "POST") { const entry = { id: `${kind}-${rows.length}`, ...structuredClone(payload) }; rows.push(entry); return structuredClone(entry); }
+        const entry = rows.find(item => item.id === path.split("/").at(-1));
+        Object.assign(entry, structuredClone(payload)); return structuredClone(entry);
+      }
       if (path.includes("/faqs")) {
         const entries = faqs[path.split("/")[4]];
         if (method === "POST") entries.push({ id: `faq-${entries.length}`, ...payload });
@@ -82,8 +90,78 @@ function setup(permissions = ["business.read", "business.write", "location.write
     },
   };
   const app = new AdminApp(root, api, { confirm: () => true, open: (...args) => opened.push(args) });
-  return { root, app, api, writes, opened, faqs, team, copied };
+  return { root, app, api, writes, opened, faqs, team, copied, catalog };
 }
+
+test("catalog creates, edits, hides and restores exactly one product immediately using location names", async () => {
+  const { root, app, catalog, writes } = setup(); app.tab = "Catalog"; await app.start();
+  assert.ok(button(root, "Catalog")); assert.ok(root.textContent.includes("No products yet."));
+  field(root, "Product name").value = "<script>tea</script>"; field(root, "Category").value = "Drinks";
+  field(root, "Offer at this location").checked = true; field(root, "Price (optional)").value = "12.50";
+  form(root, "Add product").dispatch("submit"); await app.task;
+  assert.equal(writes[0].path, "/api/v1/businesses/a/catalog/products");
+  assert.deepEqual(writes[0].payload.offerings, [{ location_id: "loc", offered: true, price: "12.50", currency: "USD", availability: "unknown" }]);
+  assert.ok(root.textContent.includes("<script>tea</script>")); assert.ok(root.textContent.includes("Offered at: Main"));
+  button(root, "Edit product").dispatch("click");
+  assert.equal(field(root, "Product name").value, "<script>tea</script>");
+  field(root, "Product name").value = "Changed tea";
+  form(root, "Edit product").dispatch("submit"); await app.task;
+  assert.ok(root.textContent.includes("Changed tea")); assert.equal(writes.at(-1).method, "PUT");
+  app.confirm = () => false; button(root, "Remove product from customers").dispatch("click"); await app.task;
+  assert.equal(catalog.a.products[0].enabled, true);
+  app.confirm = function () { assert.equal(this, globalThis); return true; };
+  button(root, "Remove product from customers").dispatch("click"); await app.task;
+  assert.ok(root.textContent.includes("Hidden from customers")); assert.equal(app.editProductId, null);
+  assert.ok(root.textContent.includes("Product removed from customers"));
+  assert.equal(catalog.a.products.length, 1);
+  button(root, "Restore product to customers").dispatch("click"); await app.task;
+  assert.equal(catalog.a.products[0].enabled, true); assert.equal(app.businessId, "a");
+});
+
+test("catalog failed save and hide retain product/editor and show errors; successful mutation leaves sibling unchanged", async () => {
+  const { root, app, api, catalog } = setup();
+  const first = { id: "one", name: "Tea", category: "Drinks", enabled: true, offerings: [] };
+  const sibling = { ...first, id: "two" }; catalog.a.products.push(first, sibling);
+  app.tab = "Catalog"; await app.start(); button(root, "Edit product").dispatch("click");
+  api.mutate = async () => { throw new ApiError(422, "Enter a valid price."); };
+  form(root, "Edit product").dispatch("submit"); await app.task;
+  assert.equal(app.editProductId, "one"); assert.equal(field(root, "Product name").value, "Tea");
+  assert.ok(root.textContent.includes("Check the product name, category and prices"));
+  button(root, "Remove product from customers").dispatch("click"); await app.task;
+  assert.equal(app.editProductId, "one"); assert.equal(app.catalog.products[0].enabled, true);
+  assert.equal(app.catalog.products.length, 2); assert.deepEqual(catalog.a.products[1], sibling);
+});
+
+test("catalog deals save, edit and hide separately; read-only roles cannot mutate", async () => {
+  const { root, app, catalog, writes } = setup(); app.tab = "Catalog"; await app.start();
+  field(root, "Deal name").value = "Tea special"; field(root, "Deal details").value = "Only configured terms";
+  field(root, "Where this deal applies").value = "loc";
+  form(root, "Add deal").dispatch("submit"); await app.task;
+  assert.equal(writes[0].payload.location_id, "loc"); assert.ok(root.textContent.includes("Tea special"));
+  button(root, "Edit deal").dispatch("click"); field(root, "Deal details").value = "Updated terms";
+  form(root, "Edit deal").dispatch("submit"); await app.task;
+  assert.ok(root.textContent.includes("Updated terms"));
+  button(root, "Remove deal from customers").dispatch("click"); await app.task;
+  assert.equal(catalog.a.deals[0].enabled, false);
+  const viewer = setup(["business.read"]); viewer.app.tab = "Catalog"; await viewer.app.start();
+  assert.ok(button(viewer.root, "Catalog")); assert.equal(button(viewer.root, "Save product").disabled, true);
+  form(viewer.root, "Add product").dispatch("submit"); await viewer.app.task;
+  assert.equal(viewer.writes.length, 0);
+});
+
+test("catalog hides only the selected same-name product and preserves another editor; tenant switching clears catalog", async () => {
+  const { root, app, catalog } = setup();
+  const row = { name: "Same tea", category: "Drinks", enabled: true, offerings: [] };
+  catalog.a.products.push({ id: "one", ...row }, { id: "two", ...row });
+  app.tab = "Catalog"; await app.start(); app.editProductId = "two"; app.render();
+  button(root, "Remove product from customers").dispatch("click"); await app.task;
+  assert.equal(app.catalog.products[0].enabled, false);
+  assert.equal(app.catalog.products[1].enabled, true); assert.equal(app.editProductId, "two");
+  assert.equal(field(root, "Product name").value, "Same tea");
+  const select = field(root, "Business"); select.value = "b"; select.dispatch("change"); await app.task;
+  assert.equal(app.editProductId, null); assert.deepEqual(app.catalog.products, []);
+  assert.ok(!root.textContent.includes("Same tea"));
+});
 
 test("dashboard loads authorized businesses, renders hostile strings as text and saves flags", async () => {
   const { root, app, writes } = setup(); await app.start();

@@ -144,18 +144,20 @@ export class AdminApp {
     this.providerProfile = null;
     this.providerTest = null; this.providerTesting = false; this.providerConnectionPanel = null;
     this.faqs = []; this.editFaqId = null; this.auditPage = null;
+    this.catalog = null; this.editProductId = null; this.editDealId = null;
     this.team = null; this.inviteLink = null; this.inviteExpiresAt = null;
     this.auditOffset = 0; this.panelError = ""; this.panelLoaded = false;
   }
   async loadManagementPanel(offset = 0) {
     const id = this.businessId;
-    const permission = this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : this.tab === "AI Provider" ? "provider.read" : this.tab === "Commands" ? "business.read" : this.tab === "Team" ? "membership.manage" : null;
+    const permission = this.tab === "Catalog" ? "business.read" : this.tab === "FAQs" ? "faq.read" : this.tab === "Audit History" ? "audit.read" : this.tab === "AI Provider" ? "provider.read" : this.tab === "Commands" ? "business.read" : this.tab === "Team" ? "membership.manage" : null;
     this.panelError = ""; this.panelLoaded = false;
     if (!permission || !this.api.can(id, permission)) return;
     try {
-      const result = await this.api.request(this.path(this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : this.tab === "Commands" ? "/commands" : this.tab === "Team" ? "/members" : `/audit?limit=25&offset=${offset}`));
+      const result = await this.api.request(this.path(this.tab === "Catalog" ? "/catalog" : this.tab === "FAQs" ? "/faqs" : this.tab === "AI Provider" ? "/provider" : this.tab === "Commands" ? "/commands" : this.tab === "Team" ? "/members" : `/audit?limit=25&offset=${offset}`));
       if (id !== this.businessId) return;
       if (this.tab === "FAQs") this.faqs = result;
+      else if (this.tab === "Catalog") this.catalog = result;
       else if (this.tab === "Team") this.team = result;
       else if (this.tab === "Commands") this.adminCommands = result;
       else if (this.tab === "AI Provider") {
@@ -242,7 +244,7 @@ export class AdminApp {
       this.root.replaceChildren(fragment); this.updateControls(); return;
     }
     const nav = this.node("nav", "", { "aria-label": "Management sections" });
-    const sections = ["Business", "Locations", "Assistant", "Compliance", "Branding", "FAQs", "Audit History", "AI Provider", "Commands"];
+    const sections = ["Business", "Locations", "Assistant", "Compliance", "Branding", "Catalog", "FAQs", "Audit History", "AI Provider", "Commands"];
     if (this.api.can(this.businessId, "membership.manage")) sections.push("Team");
     if (this.runtime?.available && this.api.can(this.businessId, "runtime.shutdown")) sections.push("System");
     for (const title of sections) {
@@ -252,7 +254,7 @@ export class AdminApp {
           this.inviteLink = null; this.inviteExpiresAt = null;
         }
         this.dirty = false; this.tab = title;
-        if (["FAQs", "Audit History", "AI Provider", "Commands", "Team"].includes(title)) return this.run(async () => {
+        if (["Catalog", "FAQs", "Audit History", "AI Provider", "Commands", "Team"].includes(title)) return this.run(async () => {
           this.resetManagementData(); this.render();
           await this.loadManagementPanel(); this.render();
         });
@@ -276,9 +278,9 @@ export class AdminApp {
       });
       fragment.append(selection);
     }
-    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView", Commands: "commandsView", Team: "teamView", System: "runtimeView" };
+    const builders = { Business: "businessForm", Locations: "locationForm", Assistant: "assistantForms", Compliance: "complianceView", Branding: "brandingForm", Catalog: "catalogView", FAQs: "faqView", "Audit History": "auditView", "AI Provider": "providerView", Commands: "commandsView", Team: "teamView", System: "runtimeView" };
     const panel = this[builders[this.tab]]();
-    this.managementPanel = ["FAQs", "Audit History", "AI Provider", "Commands", "Team"].includes(this.tab) ? panel : null;
+    this.managementPanel = ["Catalog", "FAQs", "Audit History", "AI Provider", "Commands", "Team"].includes(this.tab) ? panel : null;
     fragment.append(panel);
     this.root.replaceChildren(fragment); this.updateControls(); this.notice();
   }
@@ -458,6 +460,112 @@ export class AdminApp {
     }
     this.saveButton(form, permission, entry ? "Save FAQ" : "Create FAQ");
     section.append(form); return section;
+  }
+  catalogView() {
+    const section = this.managementSection("Catalog", "business.read");
+    if (!this.api.can(this.businessId, "business.read") || !this.panelLoaded || !this.catalog) return section;
+    const permission = "business.write";
+    section.append(this.node("p", "Manage your own product list and deals. Removing an item hides it from customers and keeps it here so you can restore it."));
+    const replace = (kind, saved) => {
+      const rows = this.catalog[kind];
+      const index = rows.findIndex(item => item.id === saved.id);
+      if (index < 0) rows.push(saved); else rows[index] = saved;
+      this.dirty = false; this.render();
+    };
+    const actions = (card, entry, kind, editKey, label) => {
+      card.append(this.button(`Edit ${label}`, () => {
+        if (!this.discard()) return;
+        this[editKey] = entry.id; this.dirty = false; this.render();
+      }, permission));
+      card.append(this.button(entry.enabled ? `Remove ${label} from customers` : `Restore ${label} to customers`, () => {
+        if (!this.discard()) return;
+        if (entry.enabled && !this.confirm.call(globalThis, `Hide this ${label} from customers? It will be kept here and can be restored.`)) return;
+        return this.run(async () => {
+          const saved = await this.api.mutate(this.path(`/catalog/${kind}/${entry.id}`), "PATCH", { enabled: !entry.enabled });
+          if (this[editKey] === entry.id) this[editKey] = null;
+          replace(kind, saved);
+        }, entry.enabled ? `${label === "product" ? "Product" : "Deal"} removed from customers. It can be restored here.` : "Restored to customers.");
+      }, permission));
+    };
+    section.append(this.node("h3", "Products"));
+    if (!this.catalog.products.length) section.append(this.node("p", "No products yet."));
+    for (const product of this.catalog.products) {
+      const card = this.node("article", "", { className: "card" });
+      const places = product.offerings.filter(row => row.offered).map(row => this.locations.find(item => item.id === row.location_id)?.display_name).filter(Boolean);
+      card.append(this.node("h3", product.name), this.node("p", `${product.category} · ${product.enabled ? "Visible to customers" : "Hidden from customers"}`));
+      if (product.description) card.append(this.node("p", product.description));
+      card.append(this.node("p", `Offered at: ${places.join(", ") || "No locations selected"}`));
+      actions(card, product, "products", "editProductId", "product"); section.append(card);
+    }
+    section.append(this.button("Add product", () => {
+      if (!this.discard()) return;
+      this.editProductId = null; this.dirty = false; this.render();
+    }, permission));
+    const product = this.catalog.products.find(item => item.id === this.editProductId);
+    let name, category, brand, description, enabled; const offers = [];
+    const productForm = this.form(product ? "Edit product" : "Add product", permission, async () => {
+      const payload = { name: name.value.trim(), category: category.value.trim(), brand: brand.value.trim() || null,
+        description: description.value.trim() || null, enabled: enabled.checked,
+        offerings: offers.map(row => ({ location_id: row.id, offered: row.offered.checked, availability: row.availability.value,
+          price: row.price.value.trim() || null, currency: row.price.value.trim() ? row.currency.value : null })) };
+      let saved;
+      try { saved = await this.api.mutate(this.path(product ? `/catalog/products/${product.id}` : "/catalog/products"), product ? "PUT" : "POST", payload); }
+      catch (error) {
+        if (error.status === 422) throw new Error("Check the product name, category and prices, then save again. Enter prices such as 12.50 using the selected currency.");
+        throw error;
+      }
+      this.editProductId = null; replace("products", saved);
+    });
+    name = this.field(productForm, "Product name", product?.name, { permission, required: true, maxLength: 200 });
+    category = this.field(productForm, "Category", product?.category, { permission, required: true, maxLength: 120 });
+    const suggestions = this.node("datalist", "", { id: "catalog-categories" });
+    for (const value of new Set(this.catalog.products.map(item => item.category))) suggestions.append(this.node("option", value, { value }));
+    category.setAttribute("list", "catalog-categories"); productForm.append(suggestions);
+    brand = this.field(productForm, "Brand (optional)", product?.brand, { permission, maxLength: 160 });
+    description = this.field(productForm, "Description", product?.description, { permission, type: "textarea", maxLength: 10000 });
+    enabled = this.field(productForm, "Visible to customers", product?.enabled ?? true, { permission, type: "checkbox" });
+    productForm.append(this.node("h3", "Available at"), this.node("p", "Choose locations and list only prices and availability you know. Leave price blank if it is not listed."));
+    if (!this.locations.length) productForm.append(this.node("p", "Add a location in Locations before offering a product to customers."));
+    for (const location of this.locations) {
+      const existing = product?.offerings.find(row => row.location_id === location.id);
+      const row = this.node("fieldset", "", { className: "card" }); row.append(this.node("legend", `${location.display_name}${location.active ? "" : " (inactive)"}`));
+      const offered = this.field(row, "Offer at this location", existing?.offered ?? false, { permission, type: "checkbox" });
+      const availability = this.field(row, "Availability", existing?.availability || "unknown", { permission, options: [["unknown", "Not reported"], ["available", "Available"], ["unavailable", "Not available"]] });
+      const price = this.field(row, "Price (optional)", existing?.price, { permission }); price.inputMode = "decimal";
+      const currency = this.field(row, "Currency", existing?.currency || "USD", { permission, options: this.catalog.currencies.map(code => [code, `${new Intl.DisplayNames(["en"], { type: "currency" }).of(code)} (${code})`]) });
+      offers.push({ id: location.id, offered, availability, price, currency }); productForm.append(row);
+    }
+    this.saveButton(productForm, permission, "Save product"); section.append(productForm);
+    section.append(this.node("h3", "Deals"));
+    if (!this.catalog.deals.length) section.append(this.node("p", "No deals yet."));
+    for (const deal of this.catalog.deals) {
+      const card = this.node("article", "", { className: "card" });
+      const scope = this.locations.find(item => item.id === deal.location_id)?.display_name || "All locations";
+      card.append(this.node("h3", deal.title), this.node("p", deal.description), this.node("p", `${scope} · ${deal.enabled ? "Visible to customers" : "Hidden from customers"}`));
+      actions(card, deal, "deals", "editDealId", "deal"); section.append(card);
+    }
+    section.append(this.button("Add deal", () => {
+      if (!this.discard()) return;
+      this.editDealId = null; this.dirty = false; this.render();
+    }, permission));
+    const deal = this.catalog.deals.find(item => item.id === this.editDealId);
+    let title, details, scope, visible;
+    const dealForm = this.form(deal ? "Edit deal" : "Add deal", permission, async () => {
+      let saved;
+      try { saved = await this.api.mutate(this.path(deal ? `/catalog/deals/${deal.id}` : "/catalog/deals"), deal ? "PUT" : "POST", {
+        title: title.value.trim(), description: details.value.trim(), location_id: scope.value || null, enabled: visible.checked,
+      }); } catch (error) {
+        if (error.status === 422) throw new Error("Enter a deal name and its details, then save again.");
+        throw error;
+      }
+      this.editDealId = null; replace("deals", saved);
+    });
+    title = this.field(dealForm, "Deal name", deal?.title, { permission, required: true, maxLength: 200 });
+    details = this.field(dealForm, "Deal details", deal?.description, { permission, required: true, type: "textarea", maxLength: 10000 });
+    scope = this.field(dealForm, "Where this deal applies", deal?.location_id || "", { permission, options: [["", "All locations"], ...this.locations.map(row => [row.id, row.display_name])] });
+    visible = this.field(dealForm, "Show deal to customers", deal?.enabled ?? true, { permission, type: "checkbox" });
+    this.saveButton(dealForm, permission, "Save deal"); section.append(dealForm);
+    return section;
   }
   teamView() {
     const section = this.managementSection("Team", "membership.manage");

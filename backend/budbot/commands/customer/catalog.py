@@ -14,6 +14,7 @@ from budbot.commands.customer.common import command_result
 from budbot.commands.types import CommandExecutionContext, ParsedCommand
 from budbot.core.exceptions import CommandError
 from budbot.services.catalog_service import CatalogService
+from budbot.services.knowledge_service import KnowledgeService
 
 
 # ISO 4217 currencies use different minor-unit scales. The common scale is two;
@@ -102,14 +103,25 @@ async def search(
     result = await _service(context).search_products(
         _selected_location_id(context), parsed.raw_arguments
     )
-    if not result.items:
+    knowledge = await KnowledgeService(context.session, context.tenant).search_public_faqs(
+        result.location_id, parsed.raw_arguments
+    ) if context.features and "faq_enabled" in context.features else ()
+    if not result.items and not knowledge:
         output = f"No catalog matches for {parsed.raw_arguments.strip()} at {result.location_name}."
         output = _with_overflow(output, result)
     else:
-        output_lines = [f"Catalog matches at {result.location_name}:", *_product_lines(result.items)]
+        output_lines = [f"Catalog matches at {result.location_name}:" if result.items else f"Search results at {result.location_name}:"]
+        if result.items:
+            output_lines.extend(["Products", *_product_lines(result.items)])
         overflow = _overflow_line(result)
         if overflow:
             output_lines.append(overflow)
+        if knowledge:
+            output_lines.append("Store information")
+            for entry in knowledge[:10]:
+                output_lines.extend((f"Q: {entry.question}", f"A: {entry.answer}"))
+            if len(knowledge) > 10:
+                output_lines.append("More store information matches are available; narrow your search.")
         output = "\n".join(output_lines)
     return command_result(parsed, output)
 

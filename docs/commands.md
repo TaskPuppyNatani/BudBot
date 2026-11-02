@@ -127,6 +127,15 @@ as not reported. These commands do not infer inventory, prices, discounts, or de
 terms. Cannabis catalog access, including categories, is protected by the resolved
 location compliance profile and age gate.
 
+V1 `/search` also searches enabled public FAQs when the FAQ feature is enabled.
+It uses the same effective business/location FAQ set as `/faq`: a matching
+location question overrides the business-wide answer, and other locations,
+private FAQs and disabled FAQs are excluded. Results separate Products from
+Store information and remain bounded (25 products and 10 FAQs). The existing
+product feature and catalog compliance/age checks still gate the entire command.
+Products marked unavailable, hidden products and unoffered location entries are
+excluded from customer product/search/category results and linked deals.
+
 ### `/payments`
 
 Show configured payment methods.

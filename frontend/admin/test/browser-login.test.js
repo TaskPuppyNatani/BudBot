@@ -17,6 +17,7 @@ const account = token => ({ csrf_token: token, user: { id: "owner-id", email: "o
 async function fixture(t, { commandOutput = () => "<script>safe command output</script>", locations = [] } = {}) {
   const calls = []; const widgetNavigations = []; let token = 0;
   const faqs = []; const audit = []; let faqSequence = 0;
+  const catalog = { products: [], deals: [], currencies: ["USD"] };
   const members = [{ membership_id: "member-one", user_id: "owner-id", display_name: "Store Owner", email: "owner@example.test", role: "owner", active: true }];
   const invitations = [];
   const provider = { configured: true, provider: "openai_compatible", model: "operator-model",
@@ -81,6 +82,17 @@ async function fixture(t, { commandOutput = () => "<script>safe command output</
       send(401, { detail: "Authentication is required." }); return;
     }
     if (path === "/api/v1/auth/me") { send(200, account(String(++token))); return; }
+    if (path === "/api/v1/businesses/a/catalog") { send(200, catalog); return; }
+    if (path.startsWith("/api/v1/businesses/a/catalog/")) {
+      if (request.headers["x-csrf-token"] !== String(token)) { send(403, { detail: "A valid CSRF token is required." }); return; }
+      let text = ""; for await (const chunk of request) text += chunk;
+      call.payload = JSON.parse(text);
+      const rows = catalog[path.split("/")[6]];
+      let row;
+      if (request.method === "POST") { row = { id: `product-${rows.length}`, ...call.payload }; rows.push(row); }
+      else { row = rows.find(item => item.id === path.split("/").at(-1)); Object.assign(row, call.payload); }
+      send(request.method === "POST" ? 201 : 200, row); return;
+    }
     if (path === "/api/v1/businesses/a/members" && request.method === "GET") {
       send(200, { members, invitations }); return;
     }
@@ -214,6 +226,34 @@ async function signIn(page, password = "synthetic owner passphrase") {
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
 }
+
+test("native owner catalog creates, edits and removes a disposable product without reload and keeps it hidden after reload", async t => {
+  const { page, calls, pageErrors } = await fixture(t, { locations: [{ id: "main", display_name: "Main store", active: true }] });
+  await signIn(page); await page.getByRole("button", { name: "Catalog", exact: true }).click();
+  await page.getByRole("heading", { name: "Add product", exact: true }).waitFor();
+  await page.getByLabel("Product name", { exact: true }).fill("Disposable tea");
+  await page.getByLabel("Category", { exact: true }).fill("Drinks");
+  await page.getByLabel("Offer at this location", { exact: true }).check();
+  await page.getByLabel("Price (optional)", { exact: true }).fill("12.50");
+  await page.getByRole("button", { name: "Save product", exact: true }).click();
+  const card = () => page.locator("article").filter({ has: page.getByRole("heading", { name: "Disposable tea", exact: true }) });
+  await card().getByRole("button", { name: "Edit product", exact: true }).waitFor();
+  assert.match(await card().textContent(), /Main store/);
+  await card().getByRole("button", { name: "Edit product", exact: true }).click();
+  await page.getByLabel("Description", { exact: true }).fill("Edited factual description");
+  await page.getByRole("button", { name: "Save product", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("article")?.textContent.includes("Edited factual description"));
+  page.once("dialog", dialog => dialog.accept());
+  await card().getByRole("button", { name: "Remove product from customers", exact: true }).click();
+  await card().getByRole("button", { name: "Restore product to customers", exact: true }).waitFor();
+  assert.match(await card().textContent(), /Hidden from customers/);
+  assert.match(await page.locator('[role="status"]').textContent(), /Product removed from customers/);
+  assert.equal(await page.getByRole("heading", { name: "Edit product", exact: true }).count(), 0);
+  await page.reload(); await page.getByRole("button", { name: "Catalog", exact: true }).click();
+  await card().getByRole("button", { name: "Restore product to customers", exact: true }).waitFor();
+  assert.ok(calls.some(call => call.path.endsWith("/catalog/products/product-0") && call.method === "PATCH" && call.payload.enabled === false));
+  assert.deepEqual(pageErrors, []);
+});
 
 test("anonymous restore leaves a usable form and native fetch issues login then dashboard reads", async t => {
   const { page, calls, pageErrors } = await fixture(t);

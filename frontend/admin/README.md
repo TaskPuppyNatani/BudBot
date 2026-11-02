@@ -1,5 +1,18 @@
 # BudBot administration (M9B Passes 1 and 2)
 
+## V1 local Catalog
+
+Admin → Catalog lets owners and admins add/edit products, enter a category by
+name, and choose existing locations with their own price and availability.
+Other business readers can inspect the catalog without changing it. Prices use
+ordinary currency amounts; blank means not listed. No IDs or JSON are needed.
+“Remove product from customers” hides the existing record and offers Restore;
+it is not permanent deletion. The same area provides simple business/location
+deals. Successful writes update the screen from the saved response immediately.
+Customer visibility still depends on enabled flags, active selected location,
+offered/available state, and the existing compliance rules. Catalog writes use
+business.write with CSRF and tenant-scoped validation; audit stores metadata only.
+
 A separate, dependency-free ES-module application served at `/admin/` by the
 backend. Only `public/` is served or copied into the runtime Docker image. Tests
 use Node's built-in assertions/test runner and a small DOM harness; there is no

@@ -240,6 +240,7 @@ class CatalogRepository:
                 CatalogCategory.business_id == self.tenant.business_id,
                 ProductOffering.location_id == location_id,
                 ProductOffering.offered.is_(True),
+                ProductOffering.availability != AvailabilityState.UNAVAILABLE.value,
                 CatalogProduct.enabled.is_(True),
                 CatalogCategory.enabled.is_(True),
             )
@@ -298,6 +299,7 @@ class CatalogRepository:
                 CatalogCategory.enabled.is_(True),
                 CatalogProduct.enabled.is_(True),
                 ProductOffering.offered.is_(True),
+                ProductOffering.availability != AvailabilityState.UNAVAILABLE.value,
                 ProductOffering.location_id == location_id,
             )
             .distinct()
@@ -334,6 +336,7 @@ class CatalogRepository:
                 ProductOffering.business_id == self.tenant.business_id,
                 ProductOffering.location_id == location_id,
                 ProductOffering.offered.is_(True),
+                ProductOffering.availability != AvailabilityState.UNAVAILABLE.value,
             )
         )
         visible_linked_category = exists(
@@ -362,6 +365,7 @@ class CatalogRepository:
                 ProductOffering.business_id == self.tenant.business_id,
                 ProductOffering.location_id == location_id,
                 ProductOffering.offered.is_(True),
+                ProductOffering.availability != AvailabilityState.UNAVAILABLE.value,
             )
         )
         statement = (
