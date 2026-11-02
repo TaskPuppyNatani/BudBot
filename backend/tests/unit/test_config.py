@@ -1,5 +1,7 @@
 """Runtime configuration validation tests."""
 
+import base64
+
 import pytest
 from pydantic import ValidationError
 
@@ -48,6 +50,27 @@ def test_production_requires_a_dedicated_rate_limit_hmac_key() -> None:
         environment="production",
         database_url="postgresql+asyncpg://user:pass@localhost/db",
         admin_login_rate_limit_key="x" * 32,
+        provider_root_key=base64.urlsafe_b64encode(bytes(range(32))).decode(),
     )
     assert configured.admin_login_rate_limit_key is not None
     assert configured.admin_login_rate_limit_key.get_secret_value() == "x" * 32
+
+
+def test_production_requires_a_valid_provider_root_key() -> None:
+    production = {
+        "_env_file": None,
+        "environment": "production",
+        "database_url": "postgresql+asyncpg://user:pass@localhost/db",
+        "admin_login_rate_limit_key": "x" * 32,
+    }
+    with pytest.raises(ValidationError, match="BUDBOT_PROVIDER_ROOT_KEY"):
+        Settings(**production)
+
+    malformed_key = "not-a-valid-key"
+    with pytest.raises(ValidationError, match="BUDBOT_PROVIDER_ROOT_KEY") as error:
+        Settings(**production, provider_root_key=malformed_key)
+    assert malformed_key not in str(error.value)
+
+    valid_key = base64.urlsafe_b64encode(bytes(range(32))).decode()
+    configured = Settings(**production, provider_root_key=valid_key)
+    assert configured.provider_root_key is not None

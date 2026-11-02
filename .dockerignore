@@ -1,4 +1,7 @@
 .env
+.env.production
+.env.production.*
+deploy/production.env
 .git
 .pytest_cache
 .venv

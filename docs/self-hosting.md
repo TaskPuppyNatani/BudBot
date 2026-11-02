@@ -1,17 +1,17 @@
 # BudBot Self-Hosting and Deployment Contract
 
-Status: V1 deployment contract; production guide incomplete
+Status: V1 local production-runtime foundation available; public deployment guide incomplete
 Last updated: 2026-11-01
 
 ## Current deployment status
 
-The available and manually exercised deployment workflow is local development
-through the Docker Compose/Control Center tooling described in README.md. The
-Compose configuration targets development and binds its published ports to
-loopback. It is not a production deployment template. A production Compose and
-HTTPS/reverse-proxy recipe, managed-container verification, and backup/restore
-rehearsal are not complete; BudBot is not yet fully pilot-ready or
-production-ready.
+The local development workflow uses the Docker Compose/Control Center tooling
+described in README.md. `docker-compose.production.yml` adds a production-shaped
+local runtime with private PostgreSQL, one-shot migrations, and persistent
+storage, but binds the backend to loopback and does not configure HTTPS or a
+reverse proxy. Backup/restore tooling and a recovery rehearsal are also
+unfinished. This is not a public deployment template; BudBot is not yet fully
+pilot-ready or production-ready.
 
 ## Goal
 
@@ -89,8 +89,65 @@ outside Git, and use the same value across backend instances. Production startup
 rejects a missing or too-short key. Do not pass owner passwords as command-line
 arguments or store them in Compose environment variables.
 
-A future production deployment needs health checks and persistent database
-storage. This repository does not yet include a production Compose stack.
+The local production-runtime foundation below supplies health checks and
+persistent PostgreSQL and branding-asset volumes. Public ingress and recovery
+remain separate unfinished steps.
+
+### Production-runtime foundation (local only)
+
+The production Compose file uses the non-root runtime image, a private
+PostgreSQL network, a one-shot Alembic migration service, and a backend port
+bound only to `127.0.0.1`. It has no source bind mounts, development reload,
+default database credentials, frontend containers, proxy, or TLS. Do not expose
+this local configuration to a LAN or the public internet.
+
+Copy `deploy/production.env.example` to a private file outside the checkout,
+fill its required values, and protect it with restrictive file permissions.
+It uses `BUDBOT_PRODUCTION_*` variables so it cannot silently reuse the
+development values from the repository's `.env`. The database password must be
+URL-safe because Compose uses it to form the PostgreSQL connection URL. The
+provider root key must be a persistent URL-safe base64 value encoding 32 random
+bytes; keep it private and do not regenerate it for an installation with saved
+provider credentials. This deployment requires both that key and the
+production login-rate-limit key, while never putting either in the image.
+
+Run the local-only stack with a stable project name so Docker keeps using the
+same named volumes:
+
+```bash
+docker compose --project-name budbot-production \
+  --env-file /path/to/private/budbot-production.env \
+  -f docker-compose.production.yml config -q
+docker compose --project-name budbot-production \
+  --env-file /path/to/private/budbot-production.env \
+  -f docker-compose.production.yml up --build -d
+docker compose --project-name budbot-production \
+  --env-file /path/to/private/budbot-production.env \
+  -f docker-compose.production.yml ps -a
+```
+
+The backend waits until PostgreSQL is healthy and the migration service exits
+successfully. A normal backend restart does not rerun Alembic. The migration
+service uses the same production image and explicit database settings. The
+backend serves Admin and Widget assets directly from that image; branding files
+persist in the `local_assets` volume. Keep the project name stable or Compose
+will select a different set of volumes.
+
+Initialize the first owner interactively from the backend container after the
+stack is running:
+
+```bash
+docker compose --project-name budbot-production \
+  --env-file /path/to/private/budbot-production.env \
+  -f docker-compose.production.yml exec backend \
+  python -m budbot.admin setup-owner
+```
+
+For local checks, `/health`, `/ready`, `/admin/`, and `/widget/` are available
+on `http://127.0.0.1:18000`. Production mode sets the Secure admin cookie; this
+loopback HTTP endpoint is only for local packaging/readiness checks. A later
+ingress checkpoint must provide HTTPS and a trusted reverse-proxy contract
+before remote owner sign-in or public deployment.
 
 ### Team invitations
 

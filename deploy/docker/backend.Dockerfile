@@ -26,7 +26,10 @@ CMD ["uvicorn", "budbot.main:app", "--host", "0.0.0.0", "--port", "8000", "--rel
 
 FROM base AS runtime
 
-RUN addgroup --system budbot && adduser --system --ingroup budbot budbot
+RUN addgroup --system budbot \
+    && adduser --system --ingroup budbot budbot \
+    && mkdir -p /app/local-assets \
+    && chown budbot:budbot /app/local-assets
 USER budbot
 
 EXPOSE 8000

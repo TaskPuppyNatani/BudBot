@@ -1,5 +1,7 @@
 """Typed runtime configuration loaded from environment variables."""
 
+import base64
+import binascii
 from functools import lru_cache
 from pathlib import Path
 import re
@@ -67,7 +69,7 @@ class Settings(BaseSettings):
     ai_capability_reasoning_control: bool = False
 
     @model_validator(mode="after")
-    def require_rate_limit_key_in_production(self) -> "Settings":
+    def require_production_secrets(self) -> "Settings":
         if self.environment == "production":
             key = (
                 self.admin_login_rate_limit_key.get_secret_value()
@@ -77,6 +79,21 @@ class Settings(BaseSettings):
             if len(key.encode("utf-8")) < 32:
                 raise ValueError(
                     "BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY must contain at least 32 bytes in production"
+                )
+            provider_key = (
+                self.provider_root_key.get_secret_value()
+                if self.provider_root_key is not None
+                else ""
+            )
+            try:
+                decoded_provider_key = base64.b64decode(
+                    provider_key.encode("ascii"), altchars=b"-_", validate=True
+                )
+            except (binascii.Error, UnicodeEncodeError, ValueError):
+                decoded_provider_key = b""
+            if len(decoded_provider_key) != 32:
+                raise ValueError(
+                    "BUDBOT_PROVIDER_ROOT_KEY must encode 32 random bytes in production"
                 )
         return self
 

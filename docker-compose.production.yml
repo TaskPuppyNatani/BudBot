@@ -1,0 +1,91 @@
+name: budbot-production
+
+x-runtime: &runtime
+  image: budbot-production:local
+  environment:
+    BUDBOT_ENVIRONMENT: production
+    BUDBOT_DATABASE_URL: "postgresql+asyncpg://${BUDBOT_PRODUCTION_DATABASE_USER:?Set production database user}:${BUDBOT_PRODUCTION_DATABASE_PASSWORD:?Set a URL-safe production database password}@db:5432/${BUDBOT_PRODUCTION_DATABASE_NAME:?Set production database name}"
+    BUDBOT_ADMIN_LOGIN_RATE_LIMIT_KEY: "${BUDBOT_PRODUCTION_ADMIN_LOGIN_RATE_LIMIT_KEY:?Set a unique production login rate-limit key}"
+    BUDBOT_PROVIDER_ROOT_KEY: "${BUDBOT_PRODUCTION_PROVIDER_ROOT_KEY:?Set a persistent production provider root key}"
+    BUDBOT_LOCAL_ASSETS_DIR: /app/local-assets
+    BUDBOT_ADMIN_SESSION_TTL_SECONDS: "${BUDBOT_PRODUCTION_ADMIN_SESSION_TTL_SECONDS:-28800}"
+    BUDBOT_CUSTOMER_SESSION_TTL_SECONDS: "${BUDBOT_PRODUCTION_CUSTOMER_SESSION_TTL_SECONDS:-86400}"
+    BUDBOT_AI_TENANT_ENABLED: "${BUDBOT_PRODUCTION_AI_TENANT_ENABLED:-true}"
+    BUDBOT_AI_COMPATIBLE_ENDPOINTS: "${BUDBOT_PRODUCTION_AI_COMPATIBLE_ENDPOINTS:-[]}"
+    BUDBOT_AI_ENABLED: "false"
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: "${BUDBOT_PRODUCTION_DATABASE_NAME:?Set production database name}"
+      POSTGRES_USER: "${BUDBOT_PRODUCTION_DATABASE_USER:?Set production database user}"
+      POSTGRES_PASSWORD: "${BUDBOT_PRODUCTION_DATABASE_PASSWORD:?Set a URL-safe production database password}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  migrate:
+    <<: *runtime
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+      target: runtime
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - data
+    restart: "no"
+
+  backend:
+    <<: *runtime
+    ports:
+      - "127.0.0.1:${BUDBOT_PRODUCTION_HTTP_PORT:-18000}:8000"
+    volumes:
+      - local_assets:/app/local-assets
+    networks:
+      - egress
+      - data
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+networks:
+  data:
+    internal: true
+  egress:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  local_assets:
