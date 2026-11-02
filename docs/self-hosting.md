@@ -1,7 +1,17 @@
 # BudBot Self-Hosting and Deployment Contract
 
-Status: V1 project contract  
-Last updated: 2026-09-19
+Status: V1 deployment contract; production guide incomplete
+Last updated: 2026-11-01
+
+## Current deployment status
+
+The available and manually exercised deployment workflow is local development
+through the Docker Compose/Control Center tooling described in README.md. The
+Compose configuration targets development and binds its published ports to
+loopback. It is not a production deployment template. A production Compose and
+HTTPS/reverse-proxy recipe, managed-container verification, and backup/restore
+rehearsal are not complete; BudBot is not yet fully pilot-ready or
+production-ready.
 
 ## Goal
 
@@ -40,16 +50,17 @@ Do not make Redis mandatory merely because it is common in SaaS stacks.
 
 ## Docker
 
-The expected V1 self-hosting experience is Docker-first.
-
-Target operator workflow:
+The local development workflow is Docker-first. Configure a private `.env`, then
+use the supported foreground or desktop launcher documented in README.md:
 
 ```bash
-cp .env.example .env
-docker compose up -d
+./scripts/dev.sh
+# or
+./scripts/start_budbot.sh
 ```
 
-followed by documented initialization/migrations.
+These commands start the development stack; they are not production deployment
+instructions.
 
 ### First owner account
 
@@ -58,7 +69,7 @@ backend runs `alembic upgrade head` before serving; in another deployment, run
 that migration before owner setup. There is no default password and no public
 owner-registration endpoint.
 
-For the M8 Control Center workflow, start BudBot once so its local demo business
+For the local Control Center workflow, start BudBot once so its local demo business
 is created, then initialize the first owner and select that business:
 
 ```bash
@@ -78,7 +89,8 @@ outside Git, and use the same value across backend instances. Production startup
 rejects a missing or too-short key. Do not pass owner passwords as command-line
 arguments or store them in Compose environment variables.
 
-The production compose stack should include health checks and persistent database storage.
+A future production deployment needs health checks and persistent database
+storage. This repository does not yet include a production Compose stack.
 
 ### Team invitations
 
@@ -90,13 +102,15 @@ password. Do not share invitation links over an untrusted connection. A link
 using `localhost` works only on the BudBot computer; use an address the
 recipient can reach (HTTPS when sharing between devices).
 
-A separate development compose file may expose development conveniences.
+The project's Compose workflow includes development conveniences and must not be
+exposed directly as a production service.
 
 ## Web administration
 
-M9B Pass 1 serves the separate dashboard at `/admin/` on the backend origin.
+The Admin dashboard is served at `/admin/` on the backend origin.
 After owner setup, open `http://127.0.0.1:8000/admin/` for the local development
-stack. Production requires HTTPS for M9A's Secure session cookie. Sign in in the
+stack. Production requires HTTPS for the Secure session cookie, but a production
+HTTPS/reverse-proxy recipe has not been verified or documented. Sign in in the
 browser; Control Center does not transfer its credentials. No frontend build or
 package installation is required.
 
@@ -107,8 +121,8 @@ runtime service user can write this application-owned image directory. The
 normal branding endpoint is authenticated; public image delivery is restricted
 to currently published logo/avatar references, not the directory contents.
 
-Follow the manual checklist in `frontend/admin/README.md` after rebuilding and
-restarting. No new database migration is needed for this pass.
+See `frontend/admin/README.md` for current Admin behavior and historical
+acceptance scenarios.
 
 ## No mandatory proprietary cloud dependencies
 
@@ -126,15 +140,16 @@ Such services may be supported later as optional adapters.
 
 ## Database
 
-PostgreSQL is the canonical production datastore.
+PostgreSQL is the canonical datastore for production deployments.
 
-Persistent storage and backup/restore instructions must be documented.
+Persistent storage is used by the development stack. Production backup/restore
+instructions remain a readiness requirement, not a completed recovery procedure.
 
 Schema migrations are applied with Alembic.
 
 ## Networking
 
-Document:
+Before production readiness, document and verify:
 
 - required exposed ports;
 - reverse-proxy expectations;
@@ -144,7 +159,8 @@ Document:
 - public widget/API endpoints;
 - private/admin endpoints where applicable.
 
-Production documentation should recommend HTTPS.
+HTTPS is required for production Admin sessions. A reverse-proxy/TLS recipe is
+still required and has not been verified.
 
 ## Configuration
 
@@ -163,11 +179,19 @@ Self-hosted operators must have a supported method to provide:
 
 Credentials must not be committed to Git.
 
+Tenant AI provider credentials are encrypted by the application with
+`BUDBOT_PROVIDER_ROOT_KEY`, which remains private deployment configuration and
+outside the database. Keep a durable backup of that key; do not regenerate it for
+an installation with encrypted credentials. See docs/configuration.md.
+
 ## Local AI example
 
-The backend can use a local OpenAI-compatible inference server without a cloud AI
-account. Start the inference server separately and configure its reachable base URL,
-model identifier, and verified harness/capabilities in the operator's private `.env`:
+For normal tenant setup, configure a local OpenAI-compatible provider in Admin.
+The environment example below is the legacy process-level fallback, which must
+be explicitly bound to one trusted business. A local compatible inference server
+does not require a cloud AI account. Start it separately and configure its
+reachable base URL, model identifier and verified harness/capabilities in the
+operator's private `.env` only when using that legacy fallback:
 
 ```text
 BUDBOT_AI_ENABLED=true
@@ -191,9 +215,10 @@ public internet. Local inference can run without internet access once the model 
 runtime are installed; cloud adapters require their configured network service.
 
 The base URL is operator-trusted configuration. Public chat clients cannot choose
-URLs, provider classes, harnesses, models, or credentials. No generic URL-fetching
-feature exists. If future admin UI allows endpoint changes, add SSRF protections
-before exposing that control.
+URLs, provider classes, harnesses, models or credentials. Tenant Admin settings
+accept only compatible endpoints on the deployment's exact allowlist; tenants
+cannot add network destinations. Restrict the allowlist to operator-controlled
+services and apply network egress rules against untrusted DNS or rebinding.
 
 The deterministic suite mocks provider HTTP calls. Live LM Studio/local-model smoke
 tests are optional and were not a normal-suite dependency; live cloud calls also
@@ -201,7 +226,8 @@ require operator credentials and may incur cost.
 
 ## Cloud deployment
 
-BudBot should remain deployable to ordinary container hosting.
+Deployment to ordinary managed containers has not been verified. Future hosted
+deployment work should preserve the self-hosted architecture and use:
 
 The cloud deployment contract should assume:
 
@@ -212,7 +238,8 @@ The cloud deployment contract should assume:
 - HTTPS;
 - persistent database.
 
-Vendor-specific deployment guides may be added later without changing application architecture.
+Vendor-specific deployment guides may be added later without changing application
+architecture.
 
 ## Backups
 
@@ -267,6 +294,10 @@ Requirements:
 - useful startup/configuration errors.
 
 ## V1 acceptance criteria
+
+These are target criteria, not evidence that production deployment or recovery is
+complete. The local development workflow is available; the production and managed
+hosting portions remain release work.
 
 A fresh machine with Docker support should be able to:
 

@@ -107,7 +107,12 @@ For each milestone:
 
 Do not automatically begin the next milestone after finishing one.
 
-## Suggested V1 milestone sequence
+## Original V1 milestone sequence (historical plan)
+
+This is the original implementation plan, not a list of unfinished application
+features. M1 through M9B Pass 6 and the local catalog/search slice are now
+implemented. The V1 release gate remains open while production-shaped deployment
+and recovery work is completed.
 
 ### M1 - Project foundation
 
@@ -330,8 +335,8 @@ M9A establishes the security boundary for self-hosted business administration:
 
 The customer/widget session and compliance APIs remain public within their
 existing tenant/session scopes. `X-BudBot-Business-ID` is never admin identity.
-M9A does not add membership invitation management, provider credential storage,
-admin command execution, audit browsing, or a dashboard; those are M9B work.
+At the M9A checkpoint, membership invitations, provider credential storage,
+admin command execution, audit browsing and the dashboard were M9B work.
 
 ### M9B Pass 1 - Core authenticated dashboard
 
@@ -354,7 +359,7 @@ See `frontend/admin/README.md` for frontend checks and the desktop/browser manua
 acceptance checklist. Provider configuration/secrets, FAQs, audit browsing, admin
 commands and membership management remain outside this pass.
 
-### M9B Pass 2 - FAQ management and audit history
+### M9B Pass 2 - FAQ management and audit history (historical checkpoint)
 
 The existing `/admin/` app now has FAQs and Audit History sections. New routes:
 
@@ -381,19 +386,23 @@ offset browsing; concurrent new entries can shift pages. Existing Pass 1 busines
 location, assistant, branding and compliance mutation events are reused without
 a broad audit retrofit. There is no public audit endpoint or audit-write UI.
 
-No migration is added: existing `faq_entries` and `audit_events` contain all
-needed fields and indexes. The Alembic head remains `0007_m9a_auth_admin`.
+At the Pass 2 checkpoint, no migration was added: existing `faq_entries` and
+`audit_events` contained the needed fields and indexes, and the Alembic head was
+`0007_m9a_auth_admin`.
 `tests/api/test_m9b_faq_audit.py` covers API/security/customer integration;
 `tests/integration/test_m9b_postgres_faq.py` proves concurrent duplicate rejection
 only when `BUDBOT_TEST_POSTGRES_URL` names an isolated database migrated to head.
 SQLite tests do not prove PostgreSQL locking. See `frontend/admin/README.md` for
-frontend tests and manual acceptance. Provider work, admin slash commands and
-membership management are deferred. The separately recorded expired-session
-direct-GET serialization defect is unchanged.
+frontend tests and the historical Pass 2 acceptance checklist. Later M9B passes
+added tenant AI providers and diagnostics, authenticated commands, Team and
+invitation management, permanent FAQ deletion, and owner-safety checks. The
+current Alembic head is `0009_m9b_business_invitations`. The expired-session
+direct-GET serialization defect recorded during Pass 2 was fixed before the
+final M9B seal.
 
-### M9 - Admin UI and admin commands
+### Original M9 - Admin UI and admin commands target
 
-Admin UI must support:
+The original Admin UI target included:
 
 - business settings;
 - assistant rename;
@@ -550,6 +559,16 @@ test validation/audit publication identical to their dashboard API actions.
 There is no migration or new credential/configuration mechanism. See
 `docs/commands.md` and `frontend/admin/README.md` for syntax and acceptance steps.
 
+## M9B Pass 6 - Team access and first-run polish
+
+The owner-only Team area supports business-scoped membership roles, invitations,
+role changes, member removal and invitation revocation. The last active owner
+cannot be demoted or removed. Initial owner setup remains a local CLI workflow;
+there is no default password or public owner-registration endpoint. FAQ customer
+visibility can be hidden/restored reversibly, while permanent deletion is a
+separate confirmed action. The current schema head is
+`0009_m9b_business_invitations`.
+
 ## External-service testing
 
 Core test suites must not require:
@@ -642,6 +661,10 @@ Before sealing a milestone, review:
 
 ## V1 release gate
 
+This gate is still open: local application workflows are implemented, but the
+production-shaped deployment and recovery requirements below have not been
+completed or rehearsed.
+
 BudBot V1 is not complete until:
 
 - every V1 command in `commands.md` is complete;
@@ -707,7 +730,11 @@ These details describe the bounded M3 implementation without starting M4:
   `BUDBOT_TEST_POSTGRES_URL` points to an isolated database already migrated
   to Alembic head. SQLite tests do not prove PostgreSQL row-lock behavior.
 
-## Current M4 implementation notes
+## M4 implementation notes (historical snapshot)
+
+These details describe the original M4 command foundation. M9B later completed
+the authenticated Admin command layer while retaining separate customer command
+sessions and boundaries.
 
 - M4 uses an explicit in-memory command registry and bootstrap. It adds no database
   model or Alembic migration.
@@ -716,15 +743,16 @@ These details describe the bounded M3 implementation without starting M4:
   routed through the command executor.
 - One executor owns scope, permission, feature, compliance, argument, and handler
   ordering. Protected capability checks reuse the M3 `ComplianceEngine`.
-- Customer and admin `/help` are the only executable M4 built-ins. Future V1 command
-  names are protected from custom-command collisions but are not registered or
-  advertised before their handlers exist.
+- Customer and admin `/help` were the only executable M4 built-ins at that
+  checkpoint. Future V1 command names were protected from custom-command
+  collisions until their handlers were implemented in later milestones.
 - `POST /api/v1/commands/execute` and `GET /api/v1/commands` are customer-only M4
   surfaces. Both require the temporary tenant header and a live same-tenant customer
   session. They do not create an admin-authentication mechanism.
 - Admin permission state and feature availability remain explicit command
-  executor inputs. M9A authenticates business admin APIs; HTTP admin command
-  execution remains for M9B.
+  executor inputs. M9A established authentication for business admin APIs; M9B
+  later added a separate authenticated admin command transport while keeping
+  customer commands isolated.
 - Future custom commands are represented only by a safe declarative definition and
   protected-name validation. M4 does not execute arbitrary custom actions, Python,
   shell commands, SQL, providers, or client-selected handlers.

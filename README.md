@@ -1,15 +1,28 @@
 # BudBot
 
 BudBot is a white-label, multi-tenant local-business assistant platform. The
-current implementation includes **M1: Project Foundation**, **M2: Tenant +
-Multi-Location Domain**, and **M3: Customer Sessions + Compliance Foundation**:
-a FastAPI service, asynchronous PostgreSQL access, Alembic migrations,
-tenant-scoped businesses and locations, normalized weekly hours, configurable
-assistant identity, persistent customer sessions, versioned compliance
-profiles, and server-side Oregon website age gating.
+current V1 implementation includes tenant-scoped businesses and multiple
+locations; business defaults and location overrides; authenticated Admin for
+business settings, branding, assistant details, hours, FAQs, audit history,
+Team access and invitations; and an embeddable customer widget with location
+selection, customer sessions, age gating, compliance checks and customer
+commands.
 
-Authentication, slash commands, AI providers, the admin frontend, product
-catalog, and the widget are not implemented yet.
+Owners can configure OpenAI-compatible providers (including LM Studio and
+OpenRouter), OpenAI and Anthropic, with encrypted per-business credentials,
+provider diagnostics, and a local catalog for products, location offerings,
+prices, availability and supported deals. Customer product commands and
+`/search` use that catalog and eligible public business knowledge.
+
+The catalog is locally managed; it does not synchronize live POS inventory.
+Payment details are displayed as business information; BudBot does not process
+payments. POS integrations, live inventory sync, ordering, transaction
+processing, browser geolocation, advanced analytics, billing, SSO, social login
+and enterprise deployment automation are deferred. The Docker/Control Center
+workflow supports local development. Production-shaped Compose and
+HTTPS/reverse-proxy guidance, managed-container verification and a backup/
+restore rehearsal remain unfinished; BudBot is not yet fully pilot-ready or
+production-ready.
 
 ## Requirements
 

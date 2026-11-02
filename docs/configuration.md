@@ -180,17 +180,24 @@ the same business. Only enabled/public rows are exposed; for the selected locati
 matching normalized question overrides the business-wide entry. Matching is exact-first
 then case-insensitive substring search, not semantic retrieval.
 
-M9B Pass 2 exposes authenticated FAQ management in `/admin/`. Questions are
-trimmed and bounded to 1–500 characters; answers to 1–10,000. An enabled/public
-question must be unique after case/whitespace normalization within its exact
-business-wide or location scope. Disabled/non-public drafts may duplicate but
-cannot be enabled/published into ambiguity. Disable instead of deleting entries.
-Changing public/enabled/scope state uses the same CSRF and membership checks as
-other admin writes. Customer sessions and compliance checks are unchanged.
+The authenticated Admin FAQ screen manages business and location entries.
+Questions are trimmed and bounded to 1–500 characters; answers to 1–10,000. An
+enabled/public question must be unique after case/whitespace normalization
+within its exact business-wide or location scope. Disabled/non-public drafts may
+duplicate, but cannot be enabled/published into ambiguity. The Admin UI provides
+separate reversible hide/restore actions and a confirmed permanent Delete FAQ action.
+M9B Pass 6 added permanent deletion. State changes and deletion use
+the same CSRF and membership checks as other admin writes. Customer sessions and
+compliance checks are unchanged.
 
 ## Product/catalog configuration
 
-V1 must define the capability even though production POS integrations are deferred.
+BudBot V1 has an owner-managed local catalog. Owners and admins can create and
+edit products, set categories, and manage location offerings with price and
+availability. Supported business/location deals remain separate catalog records.
+Customer commands use this local catalog; it does not synchronize live POS
+inventory. Product visibility can be removed and restored reversibly, while
+permanent product deletion is a separate action.
 
 A product record/provider response should support enough structured information for slash commands such as `/products`, `/search`, and `/categories`.
 
@@ -226,6 +233,11 @@ start/end timestamps. Database composite foreign keys reinforce tenant/location
 integrity. M6 does not calculate discount eligibility, tax, stacking, or checkout
 prices.
 
+The Admin form exposes the fields supported by the current owner workflow; the
+conceptual schema above is not a promise that every optional supplier or
+cannabis-specific field is collected. Dutchie, Treez, Flowhub, live inventory
+sync, ordering and transaction processing are outside the current V1 scope.
+
 ## Feature flags
 
 Capabilities should be explicit.
@@ -252,6 +264,11 @@ M6 adds `products_enabled` for `/products`, `/search`, and `/categories`, and
 
 ## AI configuration
 
+The environment-backed settings below are the legacy process-level provider
+configuration retained for compatibility and explicit binding to one trusted
+business. Normal tenant configuration is managed in Admin and stored as a
+business-specific profile.
+
 M7 AI selection is server/runtime configuration only, loaded through the typed
 `BUDBOT_AI_*` settings. AI is disabled by default. The main settings are:
 
@@ -276,14 +293,14 @@ are assertions about the configured model/harness, not capabilities inferred fro
 provider names. A workflow that requires an unavailable capability fails honestly.
 The deterministic `mock` provider is test-injected and is not a runtime setting.
 
-Provider endpoints and credentials are trusted server settings. Customer chat
-payloads cannot override provider, model, harness, base URL, or API key. Never put
-credentials in ordinary business rows, prompts, logs, or committed example files.
-M7 has no per-business or per-location AI overrides and adds no encrypted secret
-storage. M9A provides authenticated identity and permission foundations but does
-not yet expose provider configuration. M9B must validate endpoint destinations
-against SSRF risks before exposing operator-configurable URLs; resolution currently
-uses server-level defaults only.
+Provider endpoints and credentials are trusted configuration. Customer chat
+payloads cannot override provider, model, harness, base URL or API key. Never put
+credentials in ordinary business configuration, prompts, logs or committed
+example files. The earlier M7/M9A process-only design had no tenant profiles; M9B
+superseded that limitation with authenticated per-business provider settings and
+encrypted credentials. Compatible endpoints must match the deployment's exact
+allowlist; tenants cannot authorize destinations themselves. See the M9B provider
+configuration section below and docs/providers.md for details.
 
 ## Compliance configuration
 
@@ -443,4 +460,6 @@ may bind process AI settings to exactly one trusted business. The test environme
 retains synthetic process fixtures; never deploy with environment=test.
 `BUDBOT_AI_ENABLED` now controls legacy process fallback only;
 `BUDBOT_AI_TENANT_ENABLED=false` disables tenant AI globally. Timeouts/output limits
-remain deployment controls. No Test Connection, diagnostics or model discovery.
+remain deployment controls. M9B Pass 4 added saved-profile Test Connection with
+bounded model discovery for compatible endpoints and a small generation check.
+See docs/providers.md for unsupported-model-list fallback and diagnostic limits.

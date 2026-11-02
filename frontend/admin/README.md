@@ -1,4 +1,8 @@
-# BudBot administration (M9B Passes 1 and 2)
+# BudBot Admin dashboard (V1)
+
+This guide describes the current Admin surface. Pass headings preserve
+milestone history; older acceptance lists are historical, not a claim that
+later features are still planned.
 
 ## V1 local Catalog
 
@@ -6,9 +10,11 @@ Admin → Catalog lets owners and admins add/edit products, enter a category by
 name, and choose existing locations with their own price and availability.
 Other business readers can inspect the catalog without changing it. Prices use
 ordinary currency amounts; blank means not listed. No IDs or JSON are needed.
-“Remove product from customers” hides the existing record and offers Restore;
-it is not permanent deletion. The same area provides simple business/location
-deals. Successful writes update the screen from the saved response immediately.
+“Remove product from customers” is reversible and keeps the product record.
+“Delete product permanently” is a separate confirmed action that deletes the
+product and its location offerings and product-specific deals. The same area
+provides simple business/location deals. Successful writes update the screen
+from the saved response immediately.
 Customer visibility still depends on enabled flags, active selected location,
 offered/available state, and the existing compliance rules. Catalog writes use
 business.write with CSRF and tenant-scoped validation; audit stores metadata only.
@@ -76,7 +82,10 @@ credentials or tokens are transferred. The widget creates a new public customer
 session and uses its normal location/age/compliance flow. Customer API and
 branding-image fetches use `credentials: "omit"`.
 
-## Manual acceptance
+## Historical Pass 1 manual acceptance
+
+These steps record the initial dashboard acceptance. They are retained as
+reference scenarios, not as a current request to repeat every milestone check.
 
 1. Rebuild/restart the backend with the existing development Compose stack, then
    open `http://127.0.0.1:8000/admin/`. Sign in with the owner account.
@@ -115,18 +124,21 @@ branding-image fetches use `credentials: "omit"`.
     save. Direct requests still require membership and valid CSRF regardless of
     the visible controls or `X-BudBot-Business-ID`.
 
-## Pass 2: FAQs and audit history
+## Completed Pass 2: FAQs and audit history
 
 The FAQs section lists all business-owned entries, including disabled and
 non-public drafts. Owners/admins can create or edit question (1–500 characters),
 answer (1–10,000), business-wide/location scope, enabled and public state.
 Managers/viewers can read. Scope choices include only this business's locations.
-There is no hard-delete action: disable an entry to retain its configuration and
-history while removing it from customer lookup. A non-public entry is also hidden
-from customers. Location matches override business-wide entries using the existing
-case/whitespace normalization. Duplicate enabled/public questions in the same scope
-are rejected, including when republishing a draft or changing scope. Duplicate
-disabled/private drafts remain editable, so legacy ambiguity can be resolved.
+“Remove from customer answers” reversibly disables an FAQ while retaining its
+record; “Restore to customer answers” re-enables it. “Delete FAQ” is a separate
+permanent, confirmed action available from the list and editor. A non-public or
+disabled FAQ is hidden from customers. Location matches override business-wide
+entries using the existing case/whitespace normalization. Duplicate enabled/public
+questions in the same scope are rejected, including when republishing a draft or
+changing scope. Duplicate disabled/private drafts remain editable, so legacy
+ambiguity can be resolved. Permanent deletion was added after Pass 2; it removes
+the FAQ record rather than changing its visibility state.
 
 Audit History is owner-only under the existing `audit.read` policy. It shows
 business events in descending timestamp/ID order, 25 per page, with Newest/Older
@@ -138,7 +150,7 @@ Only recognized safe metadata is returned, never arbitrary stored details or FAQ
 content. Opening a section does not record a mutation. Business changes, logout
 and session expiry clear prior FAQ/audit state; neither panel is polled.
 
-### Pass 2 manual acceptance
+### Historical Pass 2 manual acceptance
 
 1. Sign in as owner, choose the intended business, open **FAQs**, and create a
    business-wide `Parking?` / `Use the main lot.` entry, enabled and public.
@@ -161,9 +173,9 @@ and session expiry clear prior FAQ/audit state; neither panel is polled.
 9. With existing admin/manager/viewer accounts, confirm the permissions above.
    Denied operations must show useful errors; UI visibility does not grant access.
 
-Provider settings/credentials/tests, administrative slash commands and
-account/membership management remain reserved for later passes. Control Center
-is unchanged: open the admin URL manually. No Pass 3 provider work is included.
+At the Pass 2 checkpoint, provider settings, commands and Team management were
+planned for later M9B passes. Those areas are now implemented and summarized
+below. Admin sign-in remains separate from Control Center sign-in.
 
 ## Pass 3: AI Provider
 
@@ -171,8 +183,31 @@ Owners can save per-business configuration, explicitly set/replace a write-only
 key and remove it (disabling AI). Ordinary saves never send a credential. Key
 inputs clear on submission, including failures. Configure the deployment root key
 and exact compatible-endpoint allowlist as documented in docs/configuration.md.
-The model/tool-calling declaration must match the chosen provider. No Test
-Connection, diagnostics, discovery or credential rehydration is implemented.
+The model/tool-calling declaration must match the chosen provider. Pass 4 added
+the saved-configuration Test Connection flow and bounded provider diagnostics;
+see docs/providers.md for its limits and safe response behavior.
+
+## Team and first-owner setup
+
+The owner-only Team area lists business members, their plain-language roles,
+and pending invitations. Owners can invite a new person or an existing BudBot
+account, change roles, remove members, and revoke pending invitations. A new
+invite link is shown once for private sharing; accepting it creates only the
+invited business membership. The UI and backend prevent removing or demoting the
+last active owner.
+
+Initialize the first owner with the local setup-owner CLI described in
+docs/self-hosting.md. There is no default password or public owner-registration
+route.
+
+## FAQ visibility and deletion
+
+“Remove from customer answers” hides an FAQ reversibly; “Restore to customer
+answers” makes it visible again when its other visibility settings allow.
+“Delete FAQ” is a separate permanent action available from the FAQ list and
+editor. It requires confirmation and removes the FAQ record. Each successful
+action updates the list immediately. Customer lookup exposes only eligible
+public, enabled FAQs in the selected business/location scope.
 
 ## Pass 5: authenticated commands
 
@@ -221,5 +256,5 @@ Prefer a disposable test location/FAQ for manual writes. Try changing Monday,
 then marking Monday closed; other days must stay unchanged. Add a FAQ with
 `question | answer` and confirm it appears under the selected location (or
 Business defaults). Automated tests cover validation, scope and rollback without
-touching the operator's data. Account and
-membership management and onboarding cleanup remain a later slice.
+touching the operator's data. Team, invitation, membership and first-owner
+workflows were added in later M9B passes and are described above.

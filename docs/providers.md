@@ -1,7 +1,7 @@
 # BudBot Provider Architecture
 
 Status: V1 project contract  
-Last updated: 2026-09-19
+Last updated: 2026-11-01
 
 ## Goal
 
@@ -23,7 +23,7 @@ Provider-specific SDK objects must not become core domain types.
 
 ## AI providers
 
-### M7 implemented transports
+### Implemented transports (introduced in M7)
 
 | Registry key | Transport | Default endpoint | Harness |
 | --- | --- | --- | --- |
@@ -65,20 +65,24 @@ are not supported.
 
 ### Trusted configuration and security boundary
 
-Provider, endpoint, model, harness, credentials, timeout, output limit, and
-capabilities come from server-side environment/configuration. AI is disabled by
-default. Public chat requests cannot select any of those values. A configured base
-URL is trusted operator input; BudBot does not fetch customer-supplied URLs. Protect
-operator configuration and deployments against SSRF if endpoint configuration is
-ever exposed through a future admin surface.
+Customer requests cannot select the provider, endpoint, model, harness,
+credentials, timeout, output limit or capabilities. The M7/M9A implementation
+used server-level settings and had no tenant provider editor; that is historical.
+M9B added authenticated per-business provider profiles and encrypted tenant
+credentials. Persisted tenant configuration is authoritative and does not inherit
+global credentials. The provider setup and encryption details are in
+docs/configuration.md.
 
-API keys use `SecretStr` while loading settings and are kept out of prompts,
-responses, and normalized exceptions. M7 does not store tenant-specific credentials
-in database columns. M9A provides authenticated admin sessions and business
-permissions but stores no per-business provider configuration or credentials.
-M9B will need a durable secret-reference/encryption boundary for tenant-specific
-provider credentials, including businesses that use their own OpenRouter keys.
-No provider setup GUI or credential storage is part of M9A.
+OpenAI-compatible endpoints saved by an owner must also match the deployment's
+exact compatible-endpoint allowlist. A tenant cannot authorize a new network
+destination. Restrict the allowlist to operator-controlled services and apply
+appropriate network egress controls. BudBot does not fetch customer-supplied URLs.
+OpenRouter is offered through the existing OpenAI-compatible transport, not a
+separate native OpenRouter transport.
+
+Provider credentials remain write-only in Admin and are encrypted outside the
+ordinary business configuration. They are never returned through customer or
+configuration read APIs, prompts, audit details or normalized provider errors.
 
 ### Tool and failure behavior
 
@@ -102,8 +106,15 @@ provider availability.
 
 ### Provider configuration
 
-See `docs/configuration.md` and `.env.example` for the server environment names.
-Local example:
+The environment example below describes legacy process-level provider settings,
+not the normal way to configure a tenant. They can be bound to exactly one
+trusted business with `BUDBOT_AI_LEGACY_BUSINESS_ID`. For normal operation,
+owners configure a business-specific provider in Admin; persisted tenant profiles
+are authoritative and do not inherit global credentials. See
+`docs/configuration.md` and `.env.example` for deployment settings and safe
+placeholders.
+
+Legacy process-level example:
 
 ```text
 BUDBOT_AI_ENABLED=true
@@ -119,7 +130,11 @@ stack. Do not bake provider names or model names into chat business logic.
 
 ## Inventory/catalog providers
 
-V1 must define an inventory/catalog interface even though production cannabis POS adapters are deferred.
+V1 includes an owner-managed local catalog behind the existing catalog provider
+interface. Owners can manage products, location offerings, prices, availability
+and supported deals in Admin; customer commands use the same tenant- and
+location-scoped catalog. This local catalog does not synchronize live inventory.
+Production POS adapters such as Dutchie, Treez and Flowhub remain deferred.
 
 Initial implementations:
 
@@ -169,13 +184,12 @@ Basic configured address/contact information remains available.
 
 ## Secret providers
 
-Secrets must be separated from tenant configuration.
-
-Define a secret-store abstraction.
-
-Self-hosted V1 may use an encrypted local/database-backed implementation or environment-backed references, provided secrets are not exposed through normal APIs/logging.
-
-A future managed deployment may use a cloud secret manager without changing core business logic.
+Secrets are separate from tenant configuration through the SecretStore
+abstraction. The current self-hosted implementation encrypts tenant provider
+credentials with AES-256-GCM and a deployment-supplied root key; the key stays
+outside the database and must be backed up separately. Self-hosting does not
+require a proprietary cloud service. A future managed deployment may provide a
+cloud secret-manager adapter behind the same abstraction.
 
 Conceptual interface:
 
